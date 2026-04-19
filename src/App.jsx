@@ -11,7 +11,7 @@ const firebaseConfig = {
   projectId: "guwahati-office-inventory",
   storageBucket: "guwahati-office-inventory.firebasestorage.app",
   messagingSenderId: "574183330855",
-  appId: "1:574183330855:web:61a52049e67f2d88dfaa02",
+  appId: "1:574183330855:web:61a52049e67f2d88dfaa02"
 };
 
 // 2. SET YOUR ADMIN EMAIL
