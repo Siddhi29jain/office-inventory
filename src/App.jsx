@@ -19,11 +19,18 @@ import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged }
 import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc, addDoc } from 'firebase/firestore';
 
 // --- FIREBASE SETUP ---
-const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+const firebaseConfig = {
+  apiKey: "AIzaSyA35OTz7lzX8yfH2jEIeeeaWd8nD9fuCwg",
+  authDomain: "guwahati-office-inventory.firebaseapp.com",
+  projectId: "guwahati-office-inventory",
+  storageBucket: "guwahati-office-inventory.firebasestorage.app",
+  messagingSenderId: "574183330855",
+  appId: "1:574183330855:web:61a52049e67f2d88dfaa02",
+};
+
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
 const getInventoryRef = () => collection(db, 'artifacts', appId, 'public', 'data', 'inventory');
 const getLogsRef = () => collection(db, 'artifacts', appId, 'public', 'data', 'logs');
