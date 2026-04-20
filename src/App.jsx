@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Package, ShieldAlert, Users, Clock, LogOut, Plus, Trash2, Minus, AlertTriangle, CheckCircle2, Search, LayoutDashboard, ClipboardList } from 'lucide-react';
+import { Package, ShieldAlert, Users, Clock, LogOut, Plus, Trash2, Minus, AlertTriangle, CheckCircle2, Search, LayoutDashboard, ClipboardList, BarChart3, Download } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut as firebaseSignOut, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc, addDoc } from 'firebase/firestore';
 
-// 1. PASTE YOUR FIREBASE CONFIG HERE
+// 1. PASTE YOUR REAL FIREBASE CONFIG HERE
 const firebaseConfig = {
   apiKey: "AIzaSyA35OTz7lzX8yfH2jEIeeeaWd8nD9fuCwg",
   authDomain: "guwahati-office-inventory.firebaseapp.com",
@@ -14,7 +14,7 @@ const firebaseConfig = {
   appId: "1:574183330855:web:61a52049e67f2d88dfaa02"
 };
 
-// 2. SET YOUR ADMIN EMAIL
+// 2. SET YOUR ADMIN EMAIL HERE
 const ADMIN_EMAIL = 'anuj107@gmail.com';
 
 const app = initializeApp(firebaseConfig);
@@ -145,6 +145,30 @@ export default function App() {
     setIsAddModalOpen(false);
   };
 
+  // Export to CSV Function for MIS
+  const exportToCSV = () => {
+    const headers = ['Material Name', 'Category', 'Current Quantity', 'Unit', 'Status', 'Date of Purchase', 'Last Issued To', 'Last Issue Date'];
+    const rows = inventory.map(item => [
+      `"${item.name}"`, 
+      `"${item.category}"`, 
+      item.quantity, 
+      `"${item.unit}"`,
+      item.quantity <= item.minThreshold ? 'LOW STOCK' : 'OK',
+      `"${item.purchaseDate || 'N/A'}"`, 
+      `"${item.lastIssuedTo || 'N/A'}"`, 
+      `"${item.lastIssueDate || 'N/A'}"`
+    ]);
+    
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(','), ...rows.map(e => e.join(','))].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `Inventory_MIS_Report_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   const lowStockItems = inventory.filter(item => item.quantity <= item.minThreshold);
   const filteredInventory = inventory.filter(item => item.name.toLowerCase().includes(searchTerm.toLowerCase()) || item.category.toLowerCase().includes(searchTerm.toLowerCase()));
 
@@ -193,8 +217,12 @@ export default function App() {
           <nav className="space-y-1">
             <button onClick={() => setCurrentView('dashboard')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${currentView === 'dashboard' ? 'bg-blue-600 text-white' : 'hover:bg-slate-800 hover:text-white'}`}><LayoutDashboard className="w-5 h-5" /> Dashboard</button>
             <button onClick={() => setCurrentView('inventory')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${currentView === 'inventory' ? 'bg-blue-600 text-white' : 'hover:bg-slate-800 hover:text-white'}`}><ClipboardList className="w-5 h-5" /> Manage Inventory</button>
+            
             {currentUser.role === 'admin' && (
-              <button onClick={() => setCurrentView('logs')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${currentView === 'logs' ? 'bg-blue-600 text-white' : 'hover:bg-slate-800 hover:text-white'}`}><Clock className="w-5 h-5" /> Activity Logs</button>
+              <>
+                <button onClick={() => setCurrentView('reports')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${currentView === 'reports' ? 'bg-blue-600 text-white' : 'hover:bg-slate-800 hover:text-white'}`}><BarChart3 className="w-5 h-5" /> MIS Reports</button>
+                <button onClick={() => setCurrentView('logs')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${currentView === 'logs' ? 'bg-blue-600 text-white' : 'hover:bg-slate-800 hover:text-white'}`}><Clock className="w-5 h-5" /> Activity Logs</button>
+              </>
             )}
           </nav>
         </div>
@@ -214,7 +242,9 @@ export default function App() {
       </aside>
 
       {/* MAIN CONTENT */}
-      <main className="flex-1 p-4 md:p-8 overflow-y-auto h-screen">
+      <main className="flex-1 p-4 md:p-8 h-screen overflow-y-auto">
+        
+        {/* DASHBOARD VIEW */}
         {currentView === 'dashboard' && (
           <div className="max-w-6xl mx-auto space-y-6">
             <header className="mb-8"><h2 className="text-2xl font-bold text-slate-800">Welcome back, {currentUser.name}</h2></header>
@@ -231,6 +261,7 @@ export default function App() {
           </div>
         )}
 
+        {/* INVENTORY VIEW */}
         {currentView === 'inventory' && (
           <div className="max-w-6xl mx-auto flex flex-col h-full">
             <header className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -245,18 +276,20 @@ export default function App() {
                 )}
               </div>
             </header>
+            
+            {/* FIXED SCROLL CONTAINER */}
             <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex-1">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-slate-50 border-b border-slate-200 text-slate-600">
+              <div className="overflow-x-auto overflow-y-auto max-h-[75vh]">
+                <table className="w-full text-left text-sm relative">
+                  <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 sticky top-0 z-10 shadow-sm">
                     <tr>
-                      <th className="p-4">Material Name</th>
-                      <th className="p-4 hidden sm:table-cell">Purchased</th>
-                      <th className="p-4 hidden sm:table-cell">Last Issued</th>
-                      <th className="p-4 text-center">Status</th>
-                      <th className="p-4 text-center">Quantity</th>
-                      <th className="p-4 text-center">Quick Update</th>
-                      {currentUser.role === 'admin' && <th className="p-4 text-right">Actions</th>}
+                      <th className="p-4 font-semibold">Material Name</th>
+                      <th className="p-4 hidden sm:table-cell font-semibold">Purchased</th>
+                      <th className="p-4 hidden sm:table-cell font-semibold">Last Issued</th>
+                      <th className="p-4 text-center font-semibold">Status</th>
+                      <th className="p-4 text-center font-semibold">Quantity</th>
+                      <th className="p-4 text-center font-semibold">Quick Update</th>
+                      {currentUser.role === 'admin' && <th className="p-4 text-right font-semibold">Actions</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -299,11 +332,65 @@ export default function App() {
           </div>
         )}
 
+        {/* MIS REPORTS VIEW */}
+        {currentView === 'reports' && currentUser.role === 'admin' && (
+          <div className="max-w-6xl mx-auto space-y-6">
+            <header className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <h2 className="text-2xl font-bold text-slate-800">Management Information Systems (MIS)</h2>
+              <button onClick={exportToCSV} className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-medium transition-colors">
+                <Download className="w-5 h-5" /> Export Full Report (CSV)
+              </button>
+            </header>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2"><BarChart3 className="w-5 h-5 text-blue-600" /> Inventory Summary</h3>
+                <ul className="space-y-4">
+                  <li className="flex justify-between items-center p-3 bg-slate-50 rounded-lg">
+                    <span className="text-slate-600 font-medium">Total Unique Materials</span>
+                    <span className="text-xl font-bold text-slate-800">{inventory.length}</span>
+                  </li>
+                  <li className="flex justify-between items-center p-3 bg-slate-50 rounded-lg">
+                    <span className="text-slate-600 font-medium">Items Needing Restock</span>
+                    <span className="text-xl font-bold text-red-600">{lowStockItems.length}</span>
+                  </li>
+                  <li className="flex justify-between items-center p-3 bg-slate-50 rounded-lg">
+                    <span className="text-slate-600 font-medium">Total Physical Units in Office</span>
+                    <span className="text-xl font-bold text-blue-600">
+                      {inventory.reduce((sum, item) => sum + item.quantity, 0)}
+                    </span>
+                  </li>
+                </ul>
+              </div>
+
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2"><AlertTriangle className="w-5 h-5 text-red-600" /> Action Required (Low Stock)</h3>
+                {lowStockItems.length === 0 ? (
+                  <div className="text-center p-6 text-slate-500 bg-slate-50 rounded-lg">All materials are sufficiently stocked.</div>
+                ) : (
+                  <ul className="space-y-3 max-h-[220px] overflow-y-auto pr-2">
+                    {lowStockItems.map(item => (
+                      <li key={item.id} className="flex justify-between items-center p-3 border border-red-100 bg-red-50 rounded-lg">
+                        <span className="font-medium text-slate-800">{item.name}</span>
+                        <div className="text-right">
+                          <div className="text-red-600 font-bold">{item.quantity} left</div>
+                          <div className="text-xs text-slate-500">Min required: {item.minThreshold}</div>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* LOGS VIEW */}
         {currentView === 'logs' && currentUser.role === 'admin' && (
           <div className="max-w-4xl mx-auto">
             <header className="mb-6"><h2 className="text-2xl font-bold text-slate-800">Activity Logs</h2></header>
             <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-              <ul className="divide-y divide-slate-100">
+              <ul className="divide-y divide-slate-100 max-h-[75vh] overflow-y-auto">
                 {logs.map(log => (
                   <li key={log.id} className="p-4 hover:bg-slate-50">
                     <p className="text-slate-800"><span className="font-bold">{log.user}</span> {log.action} {log.quantityChange > 0 && `${log.quantityChange} units of`} {log.itemName}</p>
@@ -319,23 +406,23 @@ export default function App() {
       {/* ADD MODAL */}
       {isAddModalOpen && (
         <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl w-full max-w-md p-6">
+          <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl">
             <h3 className="text-lg font-bold mb-4">Add Material</h3>
             <form onSubmit={addItem} className="space-y-4">
-              <input required name="name" type="text" placeholder="Name" className="w-full border p-2 rounded" />
-              <input required name="category" type="text" placeholder="Category" className="w-full border p-2 rounded" />
+              <input required name="name" type="text" placeholder="Name" className="w-full border border-slate-300 p-2 rounded-lg" />
+              <input required name="category" type="text" placeholder="Category" className="w-full border border-slate-300 p-2 rounded-lg" />
               <div className="flex gap-4">
-                <input required name="quantity" type="number" placeholder="Qty" className="w-full border p-2 rounded" />
-                <input required name="minThreshold" type="number" placeholder="Low Alert At" className="w-full border p-2 rounded" />
+                <input required name="quantity" type="number" placeholder="Qty" className="w-full border border-slate-300 p-2 rounded-lg" />
+                <input required name="minThreshold" type="number" placeholder="Low Alert At" className="w-full border border-slate-300 p-2 rounded-lg" />
               </div>
-              <input required name="unit" type="text" placeholder="Unit (e.g. Liters)" className="w-full border p-2 rounded" />
+              <input required name="unit" type="text" placeholder="Unit (e.g. Liters)" className="w-full border border-slate-300 p-2 rounded-lg" />
               <div>
                 <label className="block text-sm text-slate-600 mb-1">Date of Purchase</label>
-                <input required name="purchaseDate" type="date" defaultValue={new Date().toISOString().split('T')[0]} className="w-full border p-2 rounded" />
+                <input required name="purchaseDate" type="date" defaultValue={new Date().toISOString().split('T')[0]} className="w-full border border-slate-300 p-2 rounded-lg" />
               </div>
-              <div className="flex gap-2">
-                <button type="button" onClick={() => setIsAddModalOpen(false)} className="flex-1 p-2 border rounded">Cancel</button>
-                <button type="submit" className="flex-1 p-2 bg-blue-600 text-white rounded">Save</button>
+              <div className="flex gap-2 pt-2">
+                <button type="button" onClick={() => setIsAddModalOpen(false)} className="flex-1 p-2 border border-slate-300 rounded-lg hover:bg-slate-50">Cancel</button>
+                <button type="submit" className="flex-1 p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Save</button>
               </div>
             </form>
           </div>
@@ -361,8 +448,8 @@ export default function App() {
                 <input required name="issueDate" type="date" defaultValue={new Date().toISOString().split('T')[0]} className="w-full border border-slate-300 rounded-lg px-3 py-2" />
               </div>
               <div className="pt-2 flex gap-3">
-                <button type="button" onClick={() => setIssueModal({ isOpen: false, item: null })} className="flex-1 px-4 py-2 border rounded-lg">Cancel</button>
-                <button type="submit" className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg">Confirm Issue</button>
+                <button type="button" onClick={() => setIssueModal({ isOpen: false, item: null })} className="flex-1 px-4 py-2 border rounded-lg hover:bg-slate-50">Cancel</button>
+                <button type="submit" className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Confirm Issue</button>
               </div>
             </form>
           </div>
