@@ -2,12 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { Package, ShieldAlert, Users, Clock, LogOut, Plus, Trash2, Minus, AlertTriangle, CheckCircle2, Search, LayoutDashboard, ClipboardList, BarChart3, Download, Scan, Barcode } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut as firebaseSignOut, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc, addDoc } from 'firebase/firestore';
+import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc, addDoc, getDoc } from 'firebase/firestore';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 
 // 1. PASTE YOUR REAL FIREBASE CONFIG HERE
 const firebaseConfig = {
-   apiKey: "AIzaSyA35OTz7lzX8yfH2jEIeeeaWd8nD9fuCwg",
+ apiKey: "AIzaSyA35OTz7lzX8yfH2jEIeeeaWd8nD9fuCwg",
   authDomain: "guwahati-office-inventory.firebaseapp.com",
   projectId: "guwahati-office-inventory",
   storageBucket: "guwahati-office-inventory.firebasestorage.app",
@@ -36,20 +36,34 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
 
   // Scanner State
-  const [scannerMode, setScannerMode] = useState(null); // 'search', 'add', or null
+  const [scannerMode, setScannerMode] = useState(null);
   const [tempBarcode, setTempBarcode] = useState('');
 
-  // Auth State
+  // Auth & Profile State
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
+  const [age, setAge] = useState('');
+  const [gender, setGender] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
   const [authError, setAuthError] = useState('');
 
   // --- Auth & Data Fetching ---
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
-        setCurrentUser({ role: user.email === ADMIN_EMAIL ? 'admin' : 'staff', name: user.email.split('@')[0] });
+        // Fetch the user's detailed profile from the database
+        const userDoc = await getDoc(doc(db, 'users', user.uid));
+        if (userDoc.exists()) {
+          setCurrentUser({ uid: user.uid, ...userDoc.data() });
+        } else {
+          // Fallback for older accounts created before this update
+          setCurrentUser({ 
+            uid: user.uid, 
+            role: user.email === ADMIN_EMAIL ? 'admin' : 'staff', 
+            name: user.email.split('@')[0] 
+          });
+        }
       } else {
         setCurrentUser(null);
       }
@@ -99,9 +113,25 @@ export default function App() {
     e.preventDefault();
     setAuthError('');
     try {
-      if (isSignUp) await createUserWithEmailAndPassword(auth, email, password);
-      else await signInWithEmailAndPassword(auth, email, password);
-    } catch (err) { setAuthError(err.message.replace('Firebase: ', '')); }
+      if (isSignUp) {
+        // 1. Create secure email/password account
+        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+        
+        // 2. Save detailed profile data securely to database
+        await setDoc(doc(db, 'users', userCredential.user.uid), {
+          name: name,
+          age: parseInt(age),
+          gender: gender,
+          email: email,
+          role: email === ADMIN_EMAIL ? 'admin' : 'staff',
+          createdAt: new Date().toISOString()
+        });
+      } else {
+        await signInWithEmailAndPassword(auth, email, password);
+      }
+    } catch (err) { 
+      setAuthError(err.message.replace('Firebase: ', '')); 
+    }
   };
 
   const logout = () => firebaseSignOut(auth);
@@ -159,7 +189,7 @@ export default function App() {
     await addDoc(getInventoryRef(), newItem);
     await logAction('Created New Item', newItem.name, newItem.quantity);
     setIsAddModalOpen(false);
-    setTempBarcode(''); // Reset
+    setTempBarcode('');
   };
 
   const exportToCSV = () => {
@@ -191,13 +221,47 @@ export default function App() {
         <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 border border-slate-100">
           <div className="flex justify-center mb-6"><div className="bg-blue-100 p-3 rounded-full"><Package className="w-10 h-10 text-blue-600" /></div></div>
           <h1 className="text-2xl font-bold text-center text-slate-800 mb-2">Cleansing Material Hub</h1>
+          
           <form onSubmit={handleAuth} className="space-y-4 mt-8">
             {authError && <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg">{authError}</div>}
+            
+            {/* NEW SIGN UP FIELDS */}
+            {isSignUp && (
+              <div className="space-y-4 p-4 bg-slate-50 border border-slate-100 rounded-xl mb-4">
+                <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-2">Profile Details</h3>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Full Name</label>
+                  <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Vineet Kumar" className="w-full border border-slate-300 rounded-lg px-3 py-2 bg-white" required />
+                </div>
+                <div className="flex gap-4">
+                  <div className="flex-1">
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Age</label>
+                    <input type="number" min="18" max="100" value={age} onChange={e => setAge(e.target.value)} placeholder="e.g. 35" className="w-full border border-slate-300 rounded-lg px-3 py-2 bg-white" required />
+                  </div>
+                  <div className="flex-1">
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Gender</label>
+                    <select value={gender} onChange={e => setGender(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 bg-white" required>
+                      <option value="" disabled>Select...</option>
+                      <option value="Male">Male</option>
+                      <option value="Female">Female</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div><label className="block text-sm font-medium text-slate-700 mb-1">Email</label><input type="email" value={email} onChange={e => setEmail(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2" required /></div>
-            <div><label className="block text-sm font-medium text-slate-700 mb-1">Password</label><input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2" required /></div>
-            <button type="submit" className="w-full bg-blue-600 text-white font-medium py-2 rounded-lg hover:bg-blue-700">{isSignUp ? 'Create Account' : 'Sign In'}</button>
+            <div><label className="block text-sm font-medium text-slate-700 mb-1">Password</label><input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2" required minLength="6" /></div>
+            
+            <button type="submit" className="w-full bg-blue-600 text-white font-medium py-2.5 rounded-lg hover:bg-blue-700 transition-colors">
+              {isSignUp ? 'Create Account Securely' : 'Sign In'}
+            </button>
           </form>
-          <button onClick={() => setIsSignUp(!isSignUp)} className="w-full text-center mt-4 text-sm text-slate-500 hover:text-blue-600">{isSignUp ? 'Already have an account? Sign in' : 'Need an account? Create one'}</button>
+          
+          <button onClick={() => { setIsSignUp(!isSignUp); setAuthError(''); }} className="w-full text-center mt-4 text-sm text-slate-500 hover:text-blue-600 font-medium">
+            {isSignUp ? 'Already have an account? Sign in' : 'Need an account? Create one'}
+          </button>
         </div>
       </div>
     );
@@ -224,8 +288,13 @@ export default function App() {
         </div>
         <div className="mt-auto p-4 border-t border-slate-800">
           <div className="flex items-center gap-3 mb-4 px-3">
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-white ${currentUser.role === 'admin' ? 'bg-blue-500' : 'bg-emerald-500'}`}>{currentUser.name.charAt(0).toUpperCase()}</div>
-            <div className="overflow-hidden"><div className="text-sm text-white font-medium truncate">{currentUser.name}</div><div className="text-xs text-slate-500 capitalize">{currentUser.role}</div></div>
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-white ${currentUser.role === 'admin' ? 'bg-blue-500' : 'bg-emerald-500'}`}>
+              {currentUser.name ? currentUser.name.charAt(0).toUpperCase() : '@'}
+            </div>
+            <div className="overflow-hidden">
+              <div className="text-sm text-white font-medium truncate">{currentUser.name || 'User'}</div>
+              <div className="text-xs text-slate-500 capitalize">{currentUser.role}</div>
+            </div>
           </div>
           <button onClick={logout} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-red-400 hover:bg-red-400/10 rounded-lg"><LogOut className="w-4 h-4" /> Sign Out</button>
         </div>
@@ -237,7 +306,7 @@ export default function App() {
         {/* DASHBOARD VIEW */}
         {currentView === 'dashboard' && (
           <div className="max-w-6xl mx-auto space-y-6">
-            <header className="mb-8"><h2 className="text-2xl font-bold text-slate-800">Welcome back, {currentUser.name}</h2></header>
+            <header className="mb-8"><h2 className="text-2xl font-bold text-slate-800">Welcome back, {currentUser.name.split(' ')[0]}</h2></header>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4"><div className="bg-blue-100 p-4 rounded-xl text-blue-600"><Package className="w-8 h-8" /></div><div><div className="text-slate-500 text-sm font-medium">Material Types</div><div className="text-3xl font-bold text-slate-800">{inventory.length}</div></div></div>
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4"><div className="bg-red-100 p-4 rounded-xl text-red-600"><AlertTriangle className="w-8 h-8" /></div><div><div className="text-slate-500 text-sm font-medium">Low Stock Alerts</div><div className="text-3xl font-bold text-red-600">{lowStockItems.length}</div></div></div>
