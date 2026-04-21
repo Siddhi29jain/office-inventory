@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { Package, ShieldAlert, Users, Clock, LogOut, Plus, Trash2, Minus, AlertTriangle, CheckCircle2, Search, LayoutDashboard, ClipboardList, BarChart3, Download } from 'lucide-react';
+import { Package, ShieldAlert, Users, Clock, LogOut, Plus, Trash2, Minus, AlertTriangle, CheckCircle2, Search, LayoutDashboard, ClipboardList, BarChart3, Download, Scan, Barcode } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut as firebaseSignOut, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc, addDoc } from 'firebase/firestore';
+import { Html5QrcodeScanner } from 'html5-qrcode';
 
 // 1. PASTE YOUR REAL FIREBASE CONFIG HERE
 const firebaseConfig = {
-  apiKey: "AIzaSyA35OTz7lzX8yfH2jEIeeeaWd8nD9fuCwg",
+   apiKey: "AIzaSyA35OTz7lzX8yfH2jEIeeeaWd8nD9fuCwg",
   authDomain: "guwahati-office-inventory.firebaseapp.com",
   projectId: "guwahati-office-inventory",
   storageBucket: "guwahati-office-inventory.firebasestorage.app",
@@ -34,19 +35,21 @@ export default function App() {
   const [issueModal, setIssueModal] = useState({ isOpen: false, item: null });
   const [isLoading, setIsLoading] = useState(true);
 
+  // Scanner State
+  const [scannerMode, setScannerMode] = useState(null); // 'search', 'add', or null
+  const [tempBarcode, setTempBarcode] = useState('');
+
   // Auth State
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
   const [authError, setAuthError] = useState('');
 
+  // --- Auth & Data Fetching ---
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
-        setCurrentUser({
-          role: user.email === ADMIN_EMAIL ? 'admin' : 'staff',
-          name: user.email.split('@')[0]
-        });
+        setCurrentUser({ role: user.email === ADMIN_EMAIL ? 'admin' : 'staff', name: user.email.split('@')[0] });
       } else {
         setCurrentUser(null);
       }
@@ -70,15 +73,35 @@ export default function App() {
     return () => { unsubInv(); unsubLogs(); };
   }, [currentUser]);
 
+  // --- Camera Scanner Logic ---
+  useEffect(() => {
+    if (scannerMode) {
+      const scanner = new Html5QrcodeScanner("reader", { qrbox: { width: 250, height: 150 }, fps: 5 }, false);
+      scanner.render(
+        (decodedText) => {
+          scanner.clear();
+          if (scannerMode === 'search') {
+            setSearchTerm(decodedText);
+            setScannerMode(null);
+          } else if (scannerMode === 'add') {
+            setTempBarcode(decodedText);
+            setScannerMode(null);
+          }
+        },
+        (err) => { /* ignores background scanning errors */ }
+      );
+      return () => { scanner.clear().catch(e => console.error(e)); };
+    }
+  }, [scannerMode]);
+
+  // --- Actions ---
   const handleAuth = async (e) => {
     e.preventDefault();
     setAuthError('');
     try {
       if (isSignUp) await createUserWithEmailAndPassword(auth, email, password);
       else await signInWithEmailAndPassword(auth, email, password);
-    } catch (err) {
-      setAuthError(err.message.replace('Firebase: ', ''));
-    }
+    } catch (err) { setAuthError(err.message.replace('Firebase: ', '')); }
   };
 
   const logout = () => firebaseSignOut(auth);
@@ -100,24 +123,16 @@ export default function App() {
     e.preventDefault();
     const formData = new FormData(e.target);
     const issueQty = parseInt(formData.get('issueQuantity'));
-    const issueDate = formData.get('issueDate');
-    const issuedTo = formData.get('issuedTo');
     const item = issueModal.item;
-
     const newQuantity = Math.max(0, item.quantity - issueQty);
     
     try {
       await setDoc(doc(getInventoryRef(), item.id), { 
-        ...item, 
-        quantity: newQuantity,
-        lastIssueDate: issueDate,
-        lastIssuedTo: issuedTo
+        ...item, quantity: newQuantity, lastIssueDate: formData.get('issueDate'), lastIssuedTo: formData.get('issuedTo')
       });
-      await logAction(`Issued to ${issuedTo}`, item.name, issueQty);
+      await logAction(`Issued to ${formData.get('issuedTo')}`, item.name, issueQty);
       setIssueModal({ isOpen: false, item: null });
-    } catch (error) {
-      console.error("Error issuing item:", error);
-    }
+    } catch (error) { console.error(error); }
   };
 
   const deleteItem = async (id) => {
@@ -137,32 +152,25 @@ export default function App() {
       unit: formData.get('unit'),
       minThreshold: parseInt(formData.get('minThreshold')),
       purchaseDate: formData.get('purchaseDate'),
+      barcode: formData.get('barcode') || '',
       lastIssueDate: null,
       lastIssuedTo: 'Not yet issued'
     };
     await addDoc(getInventoryRef(), newItem);
     await logAction('Created New Item', newItem.name, newItem.quantity);
     setIsAddModalOpen(false);
+    setTempBarcode(''); // Reset
   };
 
-  // Export to CSV Function for MIS
   const exportToCSV = () => {
-    const headers = ['Material Name', 'Category', 'Current Quantity', 'Unit', 'Status', 'Date of Purchase', 'Last Issued To', 'Last Issue Date'];
+    const headers = ['Barcode', 'Material Name', 'Category', 'Current Quantity', 'Unit', 'Status', 'Date of Purchase', 'Last Issued To', 'Last Issue Date'];
     const rows = inventory.map(item => [
-      `"${item.name}"`, 
-      `"${item.category}"`, 
-      item.quantity, 
-      `"${item.unit}"`,
-      item.quantity <= item.minThreshold ? 'LOW STOCK' : 'OK',
-      `"${item.purchaseDate || 'N/A'}"`, 
-      `"${item.lastIssuedTo || 'N/A'}"`, 
-      `"${item.lastIssueDate || 'N/A'}"`
+      `"${item.barcode || 'N/A'}"`, `"${item.name}"`, `"${item.category}"`, item.quantity, `"${item.unit}"`,
+      item.quantity <= item.minThreshold ? 'LOW STOCK' : 'OK', `"${item.purchaseDate || 'N/A'}"`, `"${item.lastIssuedTo || 'N/A'}"`, `"${item.lastIssueDate || 'N/A'}"`
     ]);
-    
     const csvContent = "data:text/csv;charset=utf-8," + [headers.join(','), ...rows.map(e => e.join(','))].join("\n");
-    const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
+    link.setAttribute("href", encodeURI(csvContent));
     link.setAttribute("download", `Inventory_MIS_Report_${new Date().toISOString().split('T')[0]}.csv`);
     document.body.appendChild(link);
     link.click();
@@ -170,7 +178,11 @@ export default function App() {
   };
 
   const lowStockItems = inventory.filter(item => item.quantity <= item.minThreshold);
-  const filteredInventory = inventory.filter(item => item.name.toLowerCase().includes(searchTerm.toLowerCase()) || item.category.toLowerCase().includes(searchTerm.toLowerCase()));
+  const filteredInventory = inventory.filter(item => 
+    item.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+    item.category.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (item.barcode && item.barcode.includes(searchTerm))
+  );
 
   // LOGIN SCREEN
   if (!currentUser) {
@@ -179,24 +191,13 @@ export default function App() {
         <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 border border-slate-100">
           <div className="flex justify-center mb-6"><div className="bg-blue-100 p-3 rounded-full"><Package className="w-10 h-10 text-blue-600" /></div></div>
           <h1 className="text-2xl font-bold text-center text-slate-800 mb-2">Cleansing Material Hub</h1>
-          
           <form onSubmit={handleAuth} className="space-y-4 mt-8">
             {authError && <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg">{authError}</div>}
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Email</label>
-              <input type="email" value={email} onChange={e => setEmail(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500" required />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Password</label>
-              <input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500" required />
-            </div>
-            <button type="submit" className="w-full bg-blue-600 text-white font-medium py-2 rounded-lg hover:bg-blue-700 transition-colors">
-              {isSignUp ? 'Create Account' : 'Sign In'}
-            </button>
+            <div><label className="block text-sm font-medium text-slate-700 mb-1">Email</label><input type="email" value={email} onChange={e => setEmail(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2" required /></div>
+            <div><label className="block text-sm font-medium text-slate-700 mb-1">Password</label><input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2" required /></div>
+            <button type="submit" className="w-full bg-blue-600 text-white font-medium py-2 rounded-lg hover:bg-blue-700">{isSignUp ? 'Create Account' : 'Sign In'}</button>
           </form>
-          <button onClick={() => setIsSignUp(!isSignUp)} className="w-full text-center mt-4 text-sm text-slate-500 hover:text-blue-600">
-            {isSignUp ? 'Already have an account? Sign in' : 'Need an account? Create one'}
-          </button>
+          <button onClick={() => setIsSignUp(!isSignUp)} className="w-full text-center mt-4 text-sm text-slate-500 hover:text-blue-600">{isSignUp ? 'Already have an account? Sign in' : 'Need an account? Create one'}</button>
         </div>
       </div>
     );
@@ -207,17 +208,12 @@ export default function App() {
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row">
       {/* SIDEBAR */}
       <aside className="w-full md:w-64 bg-slate-900 text-slate-300 flex flex-col md:min-h-screen shadow-xl z-10">
-        <div className="p-6 flex items-center gap-3 text-white border-b border-slate-800">
-          <Package className="w-8 h-8 text-blue-400" />
-          <span className="font-bold text-lg leading-tight">Cleansing<br/>Inventory</span>
-        </div>
-        
+        <div className="p-6 flex items-center gap-3 text-white border-b border-slate-800"><Package className="w-8 h-8 text-blue-400" /><span className="font-bold text-lg leading-tight">Cleansing<br/>Inventory</span></div>
         <div className="p-4">
           <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 px-3">Main Menu</div>
           <nav className="space-y-1">
             <button onClick={() => setCurrentView('dashboard')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${currentView === 'dashboard' ? 'bg-blue-600 text-white' : 'hover:bg-slate-800 hover:text-white'}`}><LayoutDashboard className="w-5 h-5" /> Dashboard</button>
             <button onClick={() => setCurrentView('inventory')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${currentView === 'inventory' ? 'bg-blue-600 text-white' : 'hover:bg-slate-800 hover:text-white'}`}><ClipboardList className="w-5 h-5" /> Manage Inventory</button>
-            
             {currentUser.role === 'admin' && (
               <>
                 <button onClick={() => setCurrentView('reports')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${currentView === 'reports' ? 'bg-blue-600 text-white' : 'hover:bg-slate-800 hover:text-white'}`}><BarChart3 className="w-5 h-5" /> MIS Reports</button>
@@ -226,37 +222,25 @@ export default function App() {
             )}
           </nav>
         </div>
-
         <div className="mt-auto p-4 border-t border-slate-800">
           <div className="flex items-center gap-3 mb-4 px-3">
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-white ${currentUser.role === 'admin' ? 'bg-blue-500' : 'bg-emerald-500'}`}>
-              {currentUser.name.charAt(0).toUpperCase()}
-            </div>
-            <div className="overflow-hidden">
-              <div className="text-sm text-white font-medium truncate">{currentUser.name}</div>
-              <div className="text-xs text-slate-500 capitalize">{currentUser.role}</div>
-            </div>
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-white ${currentUser.role === 'admin' ? 'bg-blue-500' : 'bg-emerald-500'}`}>{currentUser.name.charAt(0).toUpperCase()}</div>
+            <div className="overflow-hidden"><div className="text-sm text-white font-medium truncate">{currentUser.name}</div><div className="text-xs text-slate-500 capitalize">{currentUser.role}</div></div>
           </div>
-          <button onClick={logout} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-red-400 hover:bg-red-400/10 rounded-lg transition-colors"><LogOut className="w-4 h-4" /> Sign Out</button>
+          <button onClick={logout} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-red-400 hover:bg-red-400/10 rounded-lg"><LogOut className="w-4 h-4" /> Sign Out</button>
         </div>
       </aside>
 
       {/* MAIN CONTENT */}
-      <main className="flex-1 p-4 md:p-8 h-screen overflow-y-auto">
+      <main className="flex-1 p-4 md:p-8 h-screen overflow-y-auto relative">
         
         {/* DASHBOARD VIEW */}
         {currentView === 'dashboard' && (
           <div className="max-w-6xl mx-auto space-y-6">
             <header className="mb-8"><h2 className="text-2xl font-bold text-slate-800">Welcome back, {currentUser.name}</h2></header>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4">
-                <div className="bg-blue-100 p-4 rounded-xl text-blue-600"><Package className="w-8 h-8" /></div>
-                <div><div className="text-slate-500 text-sm font-medium">Material Types</div><div className="text-3xl font-bold text-slate-800">{inventory.length}</div></div>
-              </div>
-              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4">
-                <div className="bg-red-100 p-4 rounded-xl text-red-600"><AlertTriangle className="w-8 h-8" /></div>
-                <div><div className="text-slate-500 text-sm font-medium">Low Stock Alerts</div><div className="text-3xl font-bold text-red-600">{lowStockItems.length}</div></div>
-              </div>
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4"><div className="bg-blue-100 p-4 rounded-xl text-blue-600"><Package className="w-8 h-8" /></div><div><div className="text-slate-500 text-sm font-medium">Material Types</div><div className="text-3xl font-bold text-slate-800">{inventory.length}</div></div></div>
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4"><div className="bg-red-100 p-4 rounded-xl text-red-600"><AlertTriangle className="w-8 h-8" /></div><div><div className="text-slate-500 text-sm font-medium">Low Stock Alerts</div><div className="text-3xl font-bold text-red-600">{lowStockItems.length}</div></div></div>
             </div>
           </div>
         )}
@@ -266,24 +250,25 @@ export default function App() {
           <div className="max-w-6xl mx-auto flex flex-col h-full">
             <header className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div><h2 className="text-2xl font-bold text-slate-800">Inventory Management</h2></div>
-              <div className="flex items-center gap-3">
-                <div className="relative">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="relative flex-1 sm:w-64">
                   <Search className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input type="text" placeholder="Search..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-10 pr-4 py-2 border border-slate-200 rounded-lg w-full sm:w-64" />
+                  <input type="text" placeholder="Search name or barcode..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-10 pr-4 py-2 border border-slate-200 rounded-lg w-full" />
                 </div>
+                <button onClick={() => setScannerMode('search')} className="flex items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-lg"><Scan className="w-5 h-5" /> Scan</button>
                 {currentUser.role === 'admin' && (
-                  <button onClick={() => setIsAddModalOpen(true)} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"><Plus className="w-5 h-5" /> Add</button>
+                  <button onClick={() => { setIsAddModalOpen(true); setTempBarcode(''); }} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"><Plus className="w-5 h-5" /> Add</button>
                 )}
               </div>
             </header>
             
-            {/* FIXED SCROLL CONTAINER */}
             <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex-1">
               <div className="overflow-x-auto overflow-y-auto max-h-[75vh]">
                 <table className="w-full text-left text-sm relative">
                   <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 sticky top-0 z-10 shadow-sm">
                     <tr>
-                      <th className="p-4 font-semibold">Material Name</th>
+                      <th className="p-4 font-semibold">Material</th>
+                      <th className="p-4 hidden md:table-cell font-semibold">Barcode</th>
                       <th className="p-4 hidden sm:table-cell font-semibold">Purchased</th>
                       <th className="p-4 hidden sm:table-cell font-semibold">Last Issued</th>
                       <th className="p-4 text-center font-semibold">Status</th>
@@ -295,33 +280,25 @@ export default function App() {
                   <tbody className="divide-y divide-slate-100">
                     {filteredInventory.map(item => (
                       <tr key={item.id} className="hover:bg-slate-50">
-                        <td className="p-4 font-medium">{item.name}</td>
+                        <td className="p-4 font-medium text-slate-800">{item.name}</td>
+                        <td className="p-4 text-slate-500 hidden md:table-cell font-mono text-xs">{item.barcode || '-'}</td>
                         <td className="p-4 text-slate-500 hidden sm:table-cell">{item.purchaseDate || 'N/A'}</td>
                         <td className="p-4 text-slate-500 hidden sm:table-cell">
                           {item.lastIssuedTo && item.lastIssuedTo !== 'Not yet issued' ? (
-                            <div>
-                              <div className="font-medium text-slate-700">{item.lastIssuedTo}</div>
-                              <div className="text-xs text-slate-400">{item.lastIssueDate}</div>
-                            </div>
-                          ) : (
-                            <span className="text-slate-400 italic">Never</span>
-                          )}
+                            <div><div className="font-medium text-slate-700">{item.lastIssuedTo}</div><div className="text-xs text-slate-400">{item.lastIssueDate}</div></div>
+                          ) : (<span className="text-slate-400 italic">Never</span>)}
                         </td>
+                        <td className="p-4 text-center">{item.quantity <= item.minThreshold ? <span className="text-red-600 bg-red-100 px-2 py-1 rounded text-xs font-bold">LOW</span> : <span className="text-emerald-600 bg-emerald-100 px-2 py-1 rounded text-xs font-bold">OK</span>}</td>
+                        <td className="p-4 text-center font-bold text-slate-700">{item.quantity}</td>
                         <td className="p-4 text-center">
-                          {item.quantity <= item.minThreshold ? <span className="text-red-600 bg-red-100 px-2 py-1 rounded text-xs font-bold">LOW</span> : <span className="text-emerald-600 bg-emerald-100 px-2 py-1 rounded text-xs font-bold">OK</span>}
-                        </td>
-                        <td className="p-4 text-center font-bold">{item.quantity}</td>
-                        <td className="p-4 text-center">
-                          <div className="inline-flex bg-slate-100 rounded-lg p-1">
+                          <div className="inline-flex bg-slate-100 rounded-lg p-1 border border-slate-200">
                             <button onClick={() => setIssueModal({ isOpen: true, item })} className="p-1 hover:bg-white rounded" title="Issue Item"><Minus className="w-4 h-4" /></button>
                             <span className="w-8 text-center font-semibold text-slate-700">1</span>
                             <button onClick={() => updateQuantity(item.id, 1)} className="p-1 hover:bg-white rounded"><Plus className="w-4 h-4" /></button>
                           </div>
                         </td>
                         {currentUser.role === 'admin' && (
-                          <td className="p-4 text-right">
-                            <button onClick={() => deleteItem(item.id)} className="text-red-500 p-2 hover:bg-red-50 rounded"><Trash2 className="w-5 h-5" /></button>
-                          </td>
+                          <td className="p-4 text-right"><button onClick={() => deleteItem(item.id)} className="text-red-500 p-2 hover:bg-red-50 rounded"><Trash2 className="w-5 h-5" /></button></td>
                         )}
                       </tr>
                     ))}
@@ -336,50 +313,16 @@ export default function App() {
         {currentView === 'reports' && currentUser.role === 'admin' && (
           <div className="max-w-6xl mx-auto space-y-6">
             <header className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <h2 className="text-2xl font-bold text-slate-800">Management Information Systems (MIS)</h2>
-              <button onClick={exportToCSV} className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-medium transition-colors">
-                <Download className="w-5 h-5" /> Export Full Report (CSV)
-              </button>
+              <h2 className="text-2xl font-bold text-slate-800">Management Information Systems</h2>
+              <button onClick={exportToCSV} className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg"><Download className="w-5 h-5" /> Export Full Report (CSV)</button>
             </header>
-            
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
                 <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2"><BarChart3 className="w-5 h-5 text-blue-600" /> Inventory Summary</h3>
                 <ul className="space-y-4">
-                  <li className="flex justify-between items-center p-3 bg-slate-50 rounded-lg">
-                    <span className="text-slate-600 font-medium">Total Unique Materials</span>
-                    <span className="text-xl font-bold text-slate-800">{inventory.length}</span>
-                  </li>
-                  <li className="flex justify-between items-center p-3 bg-slate-50 rounded-lg">
-                    <span className="text-slate-600 font-medium">Items Needing Restock</span>
-                    <span className="text-xl font-bold text-red-600">{lowStockItems.length}</span>
-                  </li>
-                  <li className="flex justify-between items-center p-3 bg-slate-50 rounded-lg">
-                    <span className="text-slate-600 font-medium">Total Physical Units in Office</span>
-                    <span className="text-xl font-bold text-blue-600">
-                      {inventory.reduce((sum, item) => sum + item.quantity, 0)}
-                    </span>
-                  </li>
+                  <li className="flex justify-between items-center p-3 bg-slate-50 rounded-lg"><span className="text-slate-600 font-medium">Total Unique Materials</span><span className="text-xl font-bold text-slate-800">{inventory.length}</span></li>
+                  <li className="flex justify-between items-center p-3 bg-slate-50 rounded-lg"><span className="text-slate-600 font-medium">Items Needing Restock</span><span className="text-xl font-bold text-red-600">{lowStockItems.length}</span></li>
                 </ul>
-              </div>
-
-              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-                <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2"><AlertTriangle className="w-5 h-5 text-red-600" /> Action Required (Low Stock)</h3>
-                {lowStockItems.length === 0 ? (
-                  <div className="text-center p-6 text-slate-500 bg-slate-50 rounded-lg">All materials are sufficiently stocked.</div>
-                ) : (
-                  <ul className="space-y-3 max-h-[220px] overflow-y-auto pr-2">
-                    {lowStockItems.map(item => (
-                      <li key={item.id} className="flex justify-between items-center p-3 border border-red-100 bg-red-50 rounded-lg">
-                        <span className="font-medium text-slate-800">{item.name}</span>
-                        <div className="text-right">
-                          <div className="text-red-600 font-bold">{item.quantity} left</div>
-                          <div className="text-xs text-slate-500">Min required: {item.minThreshold}</div>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
               </div>
             </div>
           </div>
@@ -401,6 +344,20 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {/* BARCODE SCANNER OVERLAY */}
+        {scannerMode && (
+          <div className="fixed inset-0 bg-slate-900/90 z-[60] flex flex-col items-center justify-center p-4 backdrop-blur-sm">
+            <div className="bg-white p-6 rounded-2xl w-full max-w-md shadow-2xl">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="font-bold text-xl flex items-center gap-2"><Scan className="text-blue-600"/> Scan Barcode</h3>
+                <button onClick={() => setScannerMode(null)} className="p-2 bg-red-50 text-red-600 rounded-full hover:bg-red-100"><LogOut className="w-5 h-5 rotate-180"/></button>
+              </div>
+              <div id="reader" className="w-full overflow-hidden rounded-xl border-2 border-slate-200"></div>
+              <p className="text-center text-sm text-slate-500 mt-4 font-medium">Point your camera at the barcode or QR code to scan</p>
+            </div>
+          </div>
+        )}
       </main>
 
       {/* ADD MODAL */}
@@ -409,7 +366,14 @@ export default function App() {
           <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl">
             <h3 className="text-lg font-bold mb-4">Add Material</h3>
             <form onSubmit={addItem} className="space-y-4">
-              <input required name="name" type="text" placeholder="Name" className="w-full border border-slate-300 p-2 rounded-lg" />
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <Barcode className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input name="barcode" type="text" placeholder="Barcode (Optional)" value={tempBarcode} onChange={(e) => setTempBarcode(e.target.value)} className="w-full pl-10 pr-3 py-2 border border-slate-300 rounded-lg font-mono text-sm" />
+                </div>
+                <button type="button" onClick={() => setScannerMode('add')} className="px-4 bg-slate-800 text-white rounded-lg flex items-center gap-2 hover:bg-slate-900"><Scan className="w-4 h-4"/> Scan</button>
+              </div>
+              <input required name="name" type="text" placeholder="Material Name" className="w-full border border-slate-300 p-2 rounded-lg" />
               <input required name="category" type="text" placeholder="Category" className="w-full border border-slate-300 p-2 rounded-lg" />
               <div className="flex gap-4">
                 <input required name="quantity" type="number" placeholder="Qty" className="w-full border border-slate-300 p-2 rounded-lg" />
@@ -435,18 +399,9 @@ export default function App() {
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
             <h3 className="text-lg font-bold mb-4">Issue {issueModal.item?.name}</h3>
             <form onSubmit={handleIssue} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Quantity to Issue</label>
-                <input required name="issueQuantity" type="number" min="1" max={issueModal.item?.quantity} defaultValue="1" className="w-full border border-slate-300 rounded-lg px-3 py-2" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Issued To (Name)</label>
-                <input required name="issuedTo" type="text" placeholder="e.g. John Doe" className="w-full border border-slate-300 rounded-lg px-3 py-2" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Date of Issue</label>
-                <input required name="issueDate" type="date" defaultValue={new Date().toISOString().split('T')[0]} className="w-full border border-slate-300 rounded-lg px-3 py-2" />
-              </div>
+              <div><label className="block text-sm font-medium text-slate-700 mb-1">Quantity to Issue</label><input required name="issueQuantity" type="number" min="1" max={issueModal.item?.quantity} defaultValue="1" className="w-full border border-slate-300 rounded-lg px-3 py-2" /></div>
+              <div><label className="block text-sm font-medium text-slate-700 mb-1">Issued To (Name)</label><input required name="issuedTo" type="text" placeholder="e.g. John Doe" className="w-full border border-slate-300 rounded-lg px-3 py-2" /></div>
+              <div><label className="block text-sm font-medium text-slate-700 mb-1">Date of Issue</label><input required name="issueDate" type="date" defaultValue={new Date().toISOString().split('T')[0]} className="w-full border border-slate-300 rounded-lg px-3 py-2" /></div>
               <div className="pt-2 flex gap-3">
                 <button type="button" onClick={() => setIssueModal({ isOpen: false, item: null })} className="flex-1 px-4 py-2 border rounded-lg hover:bg-slate-50">Cancel</button>
                 <button type="submit" className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Confirm Issue</button>
