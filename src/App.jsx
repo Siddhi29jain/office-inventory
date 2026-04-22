@@ -4,6 +4,7 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut as firebaseSignOut, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc, addDoc, getDoc } from 'firebase/firestore';
 import { Html5QrcodeScanner } from 'html5-qrcode';
+import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, Legend } from 'recharts';
 
 // 1. PASTE YOUR REAL FIREBASE CONFIG HERE
 const firebaseConfig = {
@@ -215,6 +216,19 @@ export default function App() {
 
   const totalCapitalLocked = inventory.reduce((sum, item) => sum + (item.quantity * (item.pricePerUnit || 0)), 0);
 
+  // --- Chart Data Processing ---
+  const healthData = [
+    { name: 'Healthy Stock', value: inventory.length - lowStockItems.length },
+    { name: 'Low Stock', value: lowStockItems.length }
+  ];
+  const HEALTH_COLORS = ['#10b981', '#ef4444']; // Emerald, Red
+
+  const categoryMap = {};
+  inventory.forEach(item => {
+    categoryMap[item.category] = (categoryMap[item.category] || 0) + 1;
+  });
+  const categoryData = Object.keys(categoryMap).map(key => ({ name: key, count: categoryMap[key] }));
+
   // LOGIN SCREEN
   if (!currentUser) {
     return (
@@ -303,193 +317,3 @@ export default function App() {
                 <div className="relative flex-1 sm:w-64">
                   <Search className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input type="text" placeholder="Search name or barcode..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-10 pr-4 py-2 border border-slate-200 rounded-lg w-full" />
-                </div>
-                <button onClick={() => setScannerMode('search')} className="flex items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-lg"><Scan className="w-5 h-5" /> Scan</button>
-                {currentUser.role === 'admin' && (
-                  <button onClick={() => { setIsAddModalOpen(true); setTempBarcode(''); }} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"><Plus className="w-5 h-5" /> Add</button>
-                )}
-              </div>
-            </header>
-            
-            <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex-1">
-              <div className="overflow-x-auto overflow-y-auto max-h-[75vh]">
-                <table className="w-full text-left text-sm relative">
-                  <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 sticky top-0 z-10 shadow-sm">
-                    <tr>
-                      <th className="p-4 font-semibold">Material</th>
-                      <th className="p-4 hidden md:table-cell font-semibold">Barcode</th>
-                      <th className="p-4 hidden sm:table-cell font-semibold text-right">Unit Price</th>
-                      <th className="p-4 text-center font-semibold">Status</th>
-                      <th className="p-4 text-center font-semibold">Quantity</th>
-                      <th className="p-4 text-center font-semibold">Quick Update</th>
-                      {currentUser.role === 'admin' && <th className="p-4 text-right font-semibold">Actions</th>}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {filteredInventory.map(item => (
-                      <tr key={item.id} className="hover:bg-slate-50">
-                        <td className="p-4 font-medium text-slate-800">{item.name}</td>
-                        <td className="p-4 text-slate-500 hidden md:table-cell font-mono text-xs">{item.barcode || '-'}</td>
-                        <td className="p-4 text-slate-500 hidden sm:table-cell text-right">
-                          {item.pricePerUnit ? `₹${item.pricePerUnit.toFixed(2)}` : '₹0.00'}
-                        </td>
-                        <td className="p-4 text-center">{item.quantity <= item.minThreshold ? <span className="text-red-600 bg-red-100 px-2 py-1 rounded text-xs font-bold">LOW</span> : <span className="text-emerald-600 bg-emerald-100 px-2 py-1 rounded text-xs font-bold">OK</span>}</td>
-                        <td className="p-4 text-center font-bold text-slate-700">{item.quantity}</td>
-                        <td className="p-4 text-center">
-                          <div className="inline-flex bg-slate-100 rounded-lg p-1 border border-slate-200">
-                            <button onClick={() => setIssueModal({ isOpen: true, item })} className="p-1 hover:bg-white rounded" title="Issue Item"><Minus className="w-4 h-4" /></button>
-                            <span className="w-8 text-center font-semibold text-slate-700">1</span>
-                            <button onClick={() => updateQuantity(item.id, 1)} className="p-1 hover:bg-white rounded"><Plus className="w-4 h-4" /></button>
-                          </div>
-                        </td>
-                        {currentUser.role === 'admin' && (
-                          <td className="p-4 text-right"><button onClick={() => deleteItem(item.id)} className="text-red-500 p-2 hover:bg-red-50 rounded"><Trash2 className="w-5 h-5" /></button></td>
-                        )}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* MIS REPORTS VIEW */}
-        {currentView === 'reports' && currentUser.role === 'admin' && (
-          <div className="max-w-6xl mx-auto space-y-6">
-            <header className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <h2 className="text-2xl font-bold text-slate-800">Management Information Systems</h2>
-              <button onClick={exportToCSV} className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg"><Download className="w-5 h-5" /> Export Financial Report</button>
-            </header>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              
-              {/* Financial Dashboard Card */}
-              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-                <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2"><IndianRupee className="w-5 h-5 text-emerald-600" /> Capital Valuation</h3>
-                <div className="mb-6">
-                  <p className="text-sm text-slate-500 font-medium">Total Capital Locked in Inventory</p>
-                  <p className="text-4xl font-bold text-slate-800 mt-1">₹{totalCapitalLocked.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
-                </div>
-                <ul className="space-y-3 border-t border-slate-100 pt-4">
-                  <li className="flex justify-between items-center"><span className="text-slate-600 text-sm">Most Valuable Asset Category</span><span className="font-semibold text-slate-800">
-                    {inventory.length > 0 ? inventory.reduce((prev, current) => (prev.quantity * (prev.pricePerUnit || 0) > current.quantity * (current.pricePerUnit || 0)) ? prev : current).name : 'N/A'}
-                  </span></li>
-                </ul>
-              </div>
-
-              {/* Operational Dashboard Card */}
-              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-                <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2"><BarChart3 className="w-5 h-5 text-blue-600" /> Operational Summary</h3>
-                <ul className="space-y-4">
-                  <li className="flex justify-between items-center p-3 bg-slate-50 rounded-lg"><span className="text-slate-600 font-medium">Total Unique Materials</span><span className="text-xl font-bold text-slate-800">{inventory.length}</span></li>
-                  <li className="flex justify-between items-center p-3 bg-slate-50 rounded-lg"><span className="text-slate-600 font-medium">Items Needing Restock</span><span className="text-xl font-bold text-red-600">{lowStockItems.length}</span></li>
-                </ul>
-              </div>
-
-            </div>
-          </div>
-        )}
-
-        {/* LOGS VIEW */}
-        {currentView === 'logs' && currentUser.role === 'admin' && (
-          <div className="max-w-4xl mx-auto">
-            <header className="mb-6"><h2 className="text-2xl font-bold text-slate-800">Activity Logs & Audit Trail</h2></header>
-            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-              <ul className="divide-y divide-slate-100 max-h-[75vh] overflow-y-auto">
-                {logs.map(log => (
-                  <li key={log.id} className="p-4 hover:bg-slate-50">
-                    <div className="flex justify-between">
-                      <p className="text-slate-800"><span className="font-bold">{log.user}</span> {log.action} {log.quantityChange > 0 && `${log.quantityChange} units of`} {log.itemName}</p>
-                      {log.financialValue > 0 && <span className="font-mono text-sm text-slate-500 border border-slate-200 px-2 rounded bg-white">Val: ₹{log.financialValue.toFixed(2)}</span>}
-                    </div>
-                    <p className="text-xs text-slate-400 mt-1">{new Date(log.timestamp).toLocaleString()}</p>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        )}
-
-        {/* BARCODE SCANNER OVERLAY */}
-        {scannerMode && (
-          <div className="fixed inset-0 bg-slate-900/90 z-[60] flex flex-col items-center justify-center p-4 backdrop-blur-sm">
-            <div className="bg-white p-6 rounded-2xl w-full max-w-md shadow-2xl">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="font-bold text-xl flex items-center gap-2"><Scan className="text-blue-600"/> Scan Barcode</h3>
-                <button onClick={() => setScannerMode(null)} className="p-2 bg-red-50 text-red-600 rounded-full hover:bg-red-100"><LogOut className="w-5 h-5 rotate-180"/></button>
-              </div>
-              <div id="reader" className="w-full overflow-hidden rounded-xl border-2 border-slate-200"></div>
-            </div>
-          </div>
-        )}
-      </main>
-
-      {/* ADD MODAL */}
-      {isAddModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl">
-            <h3 className="text-lg font-bold mb-4">Add Material</h3>
-            <form onSubmit={addItem} className="space-y-4">
-              <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <Barcode className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input name="barcode" type="text" placeholder="Barcode (Optional)" value={tempBarcode} onChange={(e) => setTempBarcode(e.target.value)} className="w-full pl-10 pr-3 py-2 border border-slate-300 rounded-lg font-mono text-sm" />
-                </div>
-                <button type="button" onClick={() => setScannerMode('add')} className="px-4 bg-slate-800 text-white rounded-lg flex items-center gap-2 hover:bg-slate-900"><Scan className="w-4 h-4"/> Scan</button>
-              </div>
-              <input required name="name" type="text" placeholder="Material Name" className="w-full border border-slate-300 p-2 rounded-lg" />
-              <input required name="category" type="text" placeholder="Category" className="w-full border border-slate-300 p-2 rounded-lg" />
-              
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-medium text-slate-500 mb-1">Quantity</label>
-                  <input required name="quantity" type="number" min="0" placeholder="0" className="w-full border border-slate-300 p-2 rounded-lg" />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-slate-500 mb-1">Low Alert At</label>
-                  <input required name="minThreshold" type="number" min="0" placeholder="0" className="w-full border border-slate-300 p-2 rounded-lg" />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-slate-500 mb-1">Unit Type</label>
-                  <input required name="unit" type="text" placeholder="e.g. Liters, Box" className="w-full border border-slate-300 p-2 rounded-lg" />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-slate-500 mb-1">Price Per Unit (₹)</label>
-                  <input required name="pricePerUnit" type="number" step="0.01" min="0" placeholder="0.00" className="w-full border border-slate-300 p-2 rounded-lg" />
-                </div>
-              </div>
-              
-              <div>
-                <label className="block text-xs font-medium text-slate-500 mb-1">Date of Purchase</label>
-                <input required name="purchaseDate" type="date" defaultValue={new Date().toISOString().split('T')[0]} className="w-full border border-slate-300 p-2 rounded-lg" />
-              </div>
-              <div className="flex gap-2 pt-2">
-                <button type="button" onClick={() => setIsAddModalOpen(false)} className="flex-1 p-2 border border-slate-300 rounded-lg hover:bg-slate-50">Cancel</button>
-                <button type="submit" className="flex-1 p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Save Asset</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ISSUE MODAL */}
-      {issueModal.isOpen && (
-        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
-            <h3 className="text-lg font-bold mb-4">Issue {issueModal.item?.name}</h3>
-            <form onSubmit={handleIssue} className="space-y-4">
-              <div><label className="block text-sm font-medium text-slate-700 mb-1">Quantity to Issue</label><input required name="issueQuantity" type="number" min="1" max={issueModal.item?.quantity} defaultValue="1" className="w-full border border-slate-300 rounded-lg px-3 py-2" /></div>
-              <div><label className="block text-sm font-medium text-slate-700 mb-1">Issued To (Name)</label><input required name="issuedTo" type="text" placeholder="e.g. John Doe" className="w-full border border-slate-300 rounded-lg px-3 py-2" /></div>
-              <div><label className="block text-sm font-medium text-slate-700 mb-1">Date of Issue</label><input required name="issueDate" type="date" defaultValue={new Date().toISOString().split('T')[0]} className="w-full border border-slate-300 rounded-lg px-3 py-2" /></div>
-              <div className="pt-2 flex gap-3">
-                <button type="button" onClick={() => setIssueModal({ isOpen: false, item: null })} className="flex-1 px-4 py-2 border rounded-lg hover:bg-slate-50">Cancel</button>
-                <button type="submit" className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Confirm Issue</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
