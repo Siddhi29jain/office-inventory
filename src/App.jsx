@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Package, ShieldAlert, Users, Clock, LogOut, Plus, Trash2, Minus, AlertTriangle, CheckCircle2, Search, LayoutDashboard, ClipboardList, BarChart3, Download, Scan, Barcode } from 'lucide-react';
+import { Package, ShieldAlert, Users, Clock, LogOut, Plus, Trash2, Minus, AlertTriangle, CheckCircle2, Search, LayoutDashboard, ClipboardList, BarChart3, Download, Scan, Barcode, IndianRupee } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut as firebaseSignOut, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc, addDoc, getDoc } from 'firebase/firestore';
@@ -7,7 +7,7 @@ import { Html5QrcodeScanner } from 'html5-qrcode';
 
 // 1. PASTE YOUR REAL FIREBASE CONFIG HERE
 const firebaseConfig = {
- apiKey: "AIzaSyA35OTz7lzX8yfH2jEIeeeaWd8nD9fuCwg",
+  apiKey: "AIzaSyA35OTz7lzX8yfH2jEIeeeaWd8nD9fuCwg",
   authDomain: "guwahati-office-inventory.firebaseapp.com",
   projectId: "guwahati-office-inventory",
   storageBucket: "guwahati-office-inventory.firebasestorage.app",
@@ -52,12 +52,10 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
-        // Fetch the user's detailed profile from the database
         const userDoc = await getDoc(doc(db, 'users', user.uid));
         if (userDoc.exists()) {
           setCurrentUser({ uid: user.uid, ...userDoc.data() });
         } else {
-          // Fallback for older accounts created before this update
           setCurrentUser({ 
             uid: user.uid, 
             role: user.email === ADMIN_EMAIL ? 'admin' : 'staff', 
@@ -102,7 +100,7 @@ export default function App() {
             setScannerMode(null);
           }
         },
-        (err) => { /* ignores background scanning errors */ }
+        (err) => {}
       );
       return () => { scanner.clear().catch(e => console.error(e)); };
     }
@@ -114,30 +112,28 @@ export default function App() {
     setAuthError('');
     try {
       if (isSignUp) {
-        // 1. Create secure email/password account
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-        
-        // 2. Save detailed profile data securely to database
         await setDoc(doc(db, 'users', userCredential.user.uid), {
-          name: name,
-          age: parseInt(age),
-          gender: gender,
-          email: email,
-          role: email === ADMIN_EMAIL ? 'admin' : 'staff',
-          createdAt: new Date().toISOString()
+          name: name, age: parseInt(age), gender: gender, email: email,
+          role: email === ADMIN_EMAIL ? 'admin' : 'staff', createdAt: new Date().toISOString()
         });
       } else {
         await signInWithEmailAndPassword(auth, email, password);
       }
-    } catch (err) { 
-      setAuthError(err.message.replace('Firebase: ', '')); 
-    }
+    } catch (err) { setAuthError(err.message.replace('Firebase: ', '')); }
   };
 
   const logout = () => firebaseSignOut(auth);
 
-  const logAction = async (action, itemName, quantityChange) => {
-    await addDoc(getLogsRef(), { timestamp: new Date().toISOString(), user: currentUser.name, action, itemName, quantityChange });
+  const logAction = async (action, itemName, quantityChange, financialValue = 0) => {
+    await addDoc(getLogsRef(), { 
+      timestamp: new Date().toISOString(), 
+      user: currentUser.name, 
+      action, 
+      itemName, 
+      quantityChange,
+      financialValue
+    });
   };
 
   const updateQuantity = async (id, change) => {
@@ -146,7 +142,7 @@ export default function App() {
     const newQuantity = Math.max(0, item.quantity + change);
     if (newQuantity === item.quantity) return;
     await setDoc(doc(getInventoryRef(), id), { ...item, quantity: newQuantity });
-    await logAction(change > 0 ? 'Added' : 'Removed', item.name, Math.abs(change));
+    await logAction(change > 0 ? 'Added' : 'Removed', item.name, Math.abs(change), Math.abs(change) * (item.pricePerUnit || 0));
   };
 
   const handleIssue = async (e) => {
@@ -155,12 +151,13 @@ export default function App() {
     const issueQty = parseInt(formData.get('issueQuantity'));
     const item = issueModal.item;
     const newQuantity = Math.max(0, item.quantity - issueQty);
+    const issueValue = issueQty * (item.pricePerUnit || 0);
     
     try {
       await setDoc(doc(getInventoryRef(), item.id), { 
         ...item, quantity: newQuantity, lastIssueDate: formData.get('issueDate'), lastIssuedTo: formData.get('issuedTo')
       });
-      await logAction(`Issued to ${formData.get('issuedTo')}`, item.name, issueQty);
+      await logAction(`Issued to ${formData.get('issuedTo')}`, item.name, issueQty, issueValue);
       setIssueModal({ isOpen: false, item: null });
     } catch (error) { console.error(error); }
   };
@@ -169,7 +166,7 @@ export default function App() {
     const item = inventory.find(i => i.id === id);
     if (!item) return;
     await deleteDoc(doc(getInventoryRef(), id));
-    await logAction('Deleted Item', item.name, 0);
+    await logAction('Deleted Item', item.name, 0, 0);
   };
 
   const addItem = async (e) => {
@@ -181,27 +178,29 @@ export default function App() {
       quantity: parseInt(formData.get('quantity')),
       unit: formData.get('unit'),
       minThreshold: parseInt(formData.get('minThreshold')),
+      pricePerUnit: parseFloat(formData.get('pricePerUnit')) || 0,
       purchaseDate: formData.get('purchaseDate'),
       barcode: formData.get('barcode') || '',
       lastIssueDate: null,
       lastIssuedTo: 'Not yet issued'
     };
     await addDoc(getInventoryRef(), newItem);
-    await logAction('Created New Item', newItem.name, newItem.quantity);
+    await logAction('Created New Item', newItem.name, newItem.quantity, newItem.quantity * newItem.pricePerUnit);
     setIsAddModalOpen(false);
     setTempBarcode('');
   };
 
   const exportToCSV = () => {
-    const headers = ['Barcode', 'Material Name', 'Category', 'Current Quantity', 'Unit', 'Status', 'Date of Purchase', 'Last Issued To', 'Last Issue Date'];
+    const headers = ['Barcode', 'Material Name', 'Category', 'Current Quantity', 'Unit', 'Unit Price (INR)', 'Total Value (INR)', 'Status', 'Date of Purchase', 'Last Issued To', 'Last Issue Date'];
     const rows = inventory.map(item => [
       `"${item.barcode || 'N/A'}"`, `"${item.name}"`, `"${item.category}"`, item.quantity, `"${item.unit}"`,
+      item.pricePerUnit || 0, (item.quantity * (item.pricePerUnit || 0)).toFixed(2),
       item.quantity <= item.minThreshold ? 'LOW STOCK' : 'OK', `"${item.purchaseDate || 'N/A'}"`, `"${item.lastIssuedTo || 'N/A'}"`, `"${item.lastIssueDate || 'N/A'}"`
     ]);
     const csvContent = "data:text/csv;charset=utf-8," + [headers.join(','), ...rows.map(e => e.join(','))].join("\n");
     const link = document.createElement("a");
     link.setAttribute("href", encodeURI(csvContent));
-    link.setAttribute("download", `Inventory_MIS_Report_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute("download", `Inventory_Financial_MIS_${new Date().toISOString().split('T')[0]}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -214,6 +213,8 @@ export default function App() {
     (item.barcode && item.barcode.includes(searchTerm))
   );
 
+  const totalCapitalLocked = inventory.reduce((sum, item) => sum + (item.quantity * (item.pricePerUnit || 0)), 0);
+
   // LOGIN SCREEN
   if (!currentUser) {
     return (
@@ -224,20 +225,12 @@ export default function App() {
           
           <form onSubmit={handleAuth} className="space-y-4 mt-8">
             {authError && <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg">{authError}</div>}
-            
-            {/* NEW SIGN UP FIELDS */}
             {isSignUp && (
               <div className="space-y-4 p-4 bg-slate-50 border border-slate-100 rounded-xl mb-4">
                 <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-2">Profile Details</h3>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Full Name</label>
-                  <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Vineet Kumar" className="w-full border border-slate-300 rounded-lg px-3 py-2 bg-white" required />
-                </div>
+                <div><label className="block text-sm font-medium text-slate-700 mb-1">Full Name</label><input type="text" value={name} onChange={e => setName(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 bg-white" required /></div>
                 <div className="flex gap-4">
-                  <div className="flex-1">
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Age</label>
-                    <input type="number" min="18" max="100" value={age} onChange={e => setAge(e.target.value)} placeholder="e.g. 35" className="w-full border border-slate-300 rounded-lg px-3 py-2 bg-white" required />
-                  </div>
+                  <div className="flex-1"><label className="block text-sm font-medium text-slate-700 mb-1">Age</label><input type="number" value={age} onChange={e => setAge(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 bg-white" required /></div>
                   <div className="flex-1">
                     <label className="block text-sm font-medium text-slate-700 mb-1">Gender</label>
                     <select value={gender} onChange={e => setGender(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 bg-white" required>
@@ -250,24 +243,16 @@ export default function App() {
                 </div>
               </div>
             )}
-
             <div><label className="block text-sm font-medium text-slate-700 mb-1">Email</label><input type="email" value={email} onChange={e => setEmail(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2" required /></div>
             <div><label className="block text-sm font-medium text-slate-700 mb-1">Password</label><input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2" required minLength="6" /></div>
-            
-            <button type="submit" className="w-full bg-blue-600 text-white font-medium py-2.5 rounded-lg hover:bg-blue-700 transition-colors">
-              {isSignUp ? 'Create Account Securely' : 'Sign In'}
-            </button>
+            <button type="submit" className="w-full bg-blue-600 text-white font-medium py-2.5 rounded-lg hover:bg-blue-700">{isSignUp ? 'Create Account Securely' : 'Sign In'}</button>
           </form>
-          
-          <button onClick={() => { setIsSignUp(!isSignUp); setAuthError(''); }} className="w-full text-center mt-4 text-sm text-slate-500 hover:text-blue-600 font-medium">
-            {isSignUp ? 'Already have an account? Sign in' : 'Need an account? Create one'}
-          </button>
+          <button onClick={() => { setIsSignUp(!isSignUp); setAuthError(''); }} className="w-full text-center mt-4 text-sm text-slate-500 hover:text-blue-600 font-medium">{isSignUp ? 'Already have an account? Sign in' : 'Need an account? Create one'}</button>
         </div>
       </div>
     );
   }
 
-  // MAIN APP VIEW
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row">
       {/* SIDEBAR */}
@@ -288,13 +273,8 @@ export default function App() {
         </div>
         <div className="mt-auto p-4 border-t border-slate-800">
           <div className="flex items-center gap-3 mb-4 px-3">
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-white ${currentUser.role === 'admin' ? 'bg-blue-500' : 'bg-emerald-500'}`}>
-              {currentUser.name ? currentUser.name.charAt(0).toUpperCase() : '@'}
-            </div>
-            <div className="overflow-hidden">
-              <div className="text-sm text-white font-medium truncate">{currentUser.name || 'User'}</div>
-              <div className="text-xs text-slate-500 capitalize">{currentUser.role}</div>
-            </div>
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-white ${currentUser.role === 'admin' ? 'bg-blue-500' : 'bg-emerald-500'}`}>{currentUser.name ? currentUser.name.charAt(0).toUpperCase() : '@'}</div>
+            <div className="overflow-hidden"><div className="text-sm text-white font-medium truncate">{currentUser.name || 'User'}</div><div className="text-xs text-slate-500 capitalize">{currentUser.role}</div></div>
           </div>
           <button onClick={logout} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-red-400 hover:bg-red-400/10 rounded-lg"><LogOut className="w-4 h-4" /> Sign Out</button>
         </div>
@@ -338,8 +318,7 @@ export default function App() {
                     <tr>
                       <th className="p-4 font-semibold">Material</th>
                       <th className="p-4 hidden md:table-cell font-semibold">Barcode</th>
-                      <th className="p-4 hidden sm:table-cell font-semibold">Purchased</th>
-                      <th className="p-4 hidden sm:table-cell font-semibold">Last Issued</th>
+                      <th className="p-4 hidden sm:table-cell font-semibold text-right">Unit Price</th>
                       <th className="p-4 text-center font-semibold">Status</th>
                       <th className="p-4 text-center font-semibold">Quantity</th>
                       <th className="p-4 text-center font-semibold">Quick Update</th>
@@ -351,11 +330,8 @@ export default function App() {
                       <tr key={item.id} className="hover:bg-slate-50">
                         <td className="p-4 font-medium text-slate-800">{item.name}</td>
                         <td className="p-4 text-slate-500 hidden md:table-cell font-mono text-xs">{item.barcode || '-'}</td>
-                        <td className="p-4 text-slate-500 hidden sm:table-cell">{item.purchaseDate || 'N/A'}</td>
-                        <td className="p-4 text-slate-500 hidden sm:table-cell">
-                          {item.lastIssuedTo && item.lastIssuedTo !== 'Not yet issued' ? (
-                            <div><div className="font-medium text-slate-700">{item.lastIssuedTo}</div><div className="text-xs text-slate-400">{item.lastIssueDate}</div></div>
-                          ) : (<span className="text-slate-400 italic">Never</span>)}
+                        <td className="p-4 text-slate-500 hidden sm:table-cell text-right">
+                          {item.pricePerUnit ? `₹${item.pricePerUnit.toFixed(2)}` : '₹0.00'}
                         </td>
                         <td className="p-4 text-center">{item.quantity <= item.minThreshold ? <span className="text-red-600 bg-red-100 px-2 py-1 rounded text-xs font-bold">LOW</span> : <span className="text-emerald-600 bg-emerald-100 px-2 py-1 rounded text-xs font-bold">OK</span>}</td>
                         <td className="p-4 text-center font-bold text-slate-700">{item.quantity}</td>
@@ -383,16 +359,34 @@ export default function App() {
           <div className="max-w-6xl mx-auto space-y-6">
             <header className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <h2 className="text-2xl font-bold text-slate-800">Management Information Systems</h2>
-              <button onClick={exportToCSV} className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg"><Download className="w-5 h-5" /> Export Full Report (CSV)</button>
+              <button onClick={exportToCSV} className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg"><Download className="w-5 h-5" /> Export Financial Report</button>
             </header>
+            
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              
+              {/* Financial Dashboard Card */}
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-                <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2"><BarChart3 className="w-5 h-5 text-blue-600" /> Inventory Summary</h3>
+                <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2"><IndianRupee className="w-5 h-5 text-emerald-600" /> Capital Valuation</h3>
+                <div className="mb-6">
+                  <p className="text-sm text-slate-500 font-medium">Total Capital Locked in Inventory</p>
+                  <p className="text-4xl font-bold text-slate-800 mt-1">₹{totalCapitalLocked.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                </div>
+                <ul className="space-y-3 border-t border-slate-100 pt-4">
+                  <li className="flex justify-between items-center"><span className="text-slate-600 text-sm">Most Valuable Asset Category</span><span className="font-semibold text-slate-800">
+                    {inventory.length > 0 ? inventory.reduce((prev, current) => (prev.quantity * (prev.pricePerUnit || 0) > current.quantity * (current.pricePerUnit || 0)) ? prev : current).name : 'N/A'}
+                  </span></li>
+                </ul>
+              </div>
+
+              {/* Operational Dashboard Card */}
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2"><BarChart3 className="w-5 h-5 text-blue-600" /> Operational Summary</h3>
                 <ul className="space-y-4">
                   <li className="flex justify-between items-center p-3 bg-slate-50 rounded-lg"><span className="text-slate-600 font-medium">Total Unique Materials</span><span className="text-xl font-bold text-slate-800">{inventory.length}</span></li>
                   <li className="flex justify-between items-center p-3 bg-slate-50 rounded-lg"><span className="text-slate-600 font-medium">Items Needing Restock</span><span className="text-xl font-bold text-red-600">{lowStockItems.length}</span></li>
                 </ul>
               </div>
+
             </div>
           </div>
         )}
@@ -400,13 +394,16 @@ export default function App() {
         {/* LOGS VIEW */}
         {currentView === 'logs' && currentUser.role === 'admin' && (
           <div className="max-w-4xl mx-auto">
-            <header className="mb-6"><h2 className="text-2xl font-bold text-slate-800">Activity Logs</h2></header>
+            <header className="mb-6"><h2 className="text-2xl font-bold text-slate-800">Activity Logs & Audit Trail</h2></header>
             <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
               <ul className="divide-y divide-slate-100 max-h-[75vh] overflow-y-auto">
                 {logs.map(log => (
                   <li key={log.id} className="p-4 hover:bg-slate-50">
-                    <p className="text-slate-800"><span className="font-bold">{log.user}</span> {log.action} {log.quantityChange > 0 && `${log.quantityChange} units of`} {log.itemName}</p>
-                    <p className="text-xs text-slate-400">{new Date(log.timestamp).toLocaleString()}</p>
+                    <div className="flex justify-between">
+                      <p className="text-slate-800"><span className="font-bold">{log.user}</span> {log.action} {log.quantityChange > 0 && `${log.quantityChange} units of`} {log.itemName}</p>
+                      {log.financialValue > 0 && <span className="font-mono text-sm text-slate-500 border border-slate-200 px-2 rounded bg-white">Val: ₹{log.financialValue.toFixed(2)}</span>}
+                    </div>
+                    <p className="text-xs text-slate-400 mt-1">{new Date(log.timestamp).toLocaleString()}</p>
                   </li>
                 ))}
               </ul>
@@ -423,7 +420,6 @@ export default function App() {
                 <button onClick={() => setScannerMode(null)} className="p-2 bg-red-50 text-red-600 rounded-full hover:bg-red-100"><LogOut className="w-5 h-5 rotate-180"/></button>
               </div>
               <div id="reader" className="w-full overflow-hidden rounded-xl border-2 border-slate-200"></div>
-              <p className="text-center text-sm text-slate-500 mt-4 font-medium">Point your camera at the barcode or QR code to scan</p>
             </div>
           </div>
         )}
@@ -444,18 +440,33 @@ export default function App() {
               </div>
               <input required name="name" type="text" placeholder="Material Name" className="w-full border border-slate-300 p-2 rounded-lg" />
               <input required name="category" type="text" placeholder="Category" className="w-full border border-slate-300 p-2 rounded-lg" />
-              <div className="flex gap-4">
-                <input required name="quantity" type="number" placeholder="Qty" className="w-full border border-slate-300 p-2 rounded-lg" />
-                <input required name="minThreshold" type="number" placeholder="Low Alert At" className="w-full border border-slate-300 p-2 rounded-lg" />
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Quantity</label>
+                  <input required name="quantity" type="number" min="0" placeholder="0" className="w-full border border-slate-300 p-2 rounded-lg" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Low Alert At</label>
+                  <input required name="minThreshold" type="number" min="0" placeholder="0" className="w-full border border-slate-300 p-2 rounded-lg" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Unit Type</label>
+                  <input required name="unit" type="text" placeholder="e.g. Liters, Box" className="w-full border border-slate-300 p-2 rounded-lg" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Price Per Unit (₹)</label>
+                  <input required name="pricePerUnit" type="number" step="0.01" min="0" placeholder="0.00" className="w-full border border-slate-300 p-2 rounded-lg" />
+                </div>
               </div>
-              <input required name="unit" type="text" placeholder="Unit (e.g. Liters)" className="w-full border border-slate-300 p-2 rounded-lg" />
+              
               <div>
-                <label className="block text-sm text-slate-600 mb-1">Date of Purchase</label>
+                <label className="block text-xs font-medium text-slate-500 mb-1">Date of Purchase</label>
                 <input required name="purchaseDate" type="date" defaultValue={new Date().toISOString().split('T')[0]} className="w-full border border-slate-300 p-2 rounded-lg" />
               </div>
               <div className="flex gap-2 pt-2">
                 <button type="button" onClick={() => setIsAddModalOpen(false)} className="flex-1 p-2 border border-slate-300 rounded-lg hover:bg-slate-50">Cancel</button>
-                <button type="submit" className="flex-1 p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Save</button>
+                <button type="submit" className="flex-1 p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Save Asset</button>
               </div>
             </form>
           </div>
