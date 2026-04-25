@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Package, ShieldAlert, Users, Clock, LogOut, Plus, Trash2, Minus, AlertTriangle, CheckCircle2, Search, LayoutDashboard, ClipboardList, BarChart3, Download, Scan, Barcode, IndianRupee } from 'lucide-react';
+import { Package, ShieldAlert, Users, Clock, LogOut, Plus, Trash2, Minus, AlertTriangle, CheckCircle2, Search, LayoutDashboard, ClipboardList, BarChart3, Download, Scan, Barcode, IndianRupee, Printer } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut as firebaseSignOut, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc, addDoc, getDoc } from 'firebase/firestore';
@@ -8,7 +8,7 @@ import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTo
 
 // 1. PASTE YOUR REAL FIREBASE CONFIG HERE
 const firebaseConfig = {
-  apiKey: "AIzaSyA35OTz7lzX8yfH2jEIeeeaWd8nD9fuCwg",
+ apiKey: "AIzaSyA35OTz7lzX8yfH2jEIeeeaWd8nD9fuCwg",
   authDomain: "guwahati-office-inventory.firebaseapp.com",
   projectId: "guwahati-office-inventory",
   storageBucket: "guwahati-office-inventory.firebasestorage.app",
@@ -267,10 +267,11 @@ export default function App() {
     );
   }
 
+  // ADDED print:bg-white to root container so background is clear on print
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row">
-      {/* SIDEBAR */}
-      <aside className="w-full md:w-64 bg-slate-900 text-slate-300 flex flex-col md:min-h-screen shadow-xl z-10">
+    <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row print:bg-white">
+      {/* SIDEBAR - Added print:hidden so it disappears on the PDF */}
+      <aside className="w-full md:w-64 bg-slate-900 text-slate-300 flex flex-col md:min-h-screen shadow-xl z-10 print:hidden">
         <div className="p-6 flex items-center gap-3 text-white border-b border-slate-800"><Package className="w-8 h-8 text-blue-400" /><span className="font-bold text-lg leading-tight">Cleansing<br/>Inventory</span></div>
         <div className="p-4">
           <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 px-3">Main Menu</div>
@@ -294,8 +295,8 @@ export default function App() {
         </div>
       </aside>
 
-      {/* MAIN CONTENT */}
-      <main className="flex-1 p-4 md:p-8 h-screen overflow-y-auto relative">
+      {/* MAIN CONTENT - Added print layout overrides */}
+      <main className="flex-1 p-4 md:p-8 h-screen overflow-y-auto relative print:p-0 print:h-auto print:overflow-visible">
         
         {/* DASHBOARD VIEW */}
         {currentView === 'dashboard' && (
@@ -378,11 +379,28 @@ export default function App() {
         {currentView === 'reports' && currentUser.role === 'admin' && (
           <div className="max-w-6xl mx-auto space-y-6">
             <header className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <h2 className="text-2xl font-bold text-slate-800">Management Information Systems</h2>
-              <button onClick={exportToCSV} className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg"><Download className="w-5 h-5" /> Export Financial Report</button>
+              <div>
+                <h2 className="text-2xl font-bold text-slate-800">Management Information Systems</h2>
+                {/* Print Only Subtitle */}
+                <p className="hidden print:block text-slate-500 mt-1">Report Generated: {new Date().toLocaleString()}</p>
+              </div>
+              
+              {/* Buttons hidden during print */}
+              <div className="flex gap-3 print:hidden">
+                <button onClick={exportToCSV} className="flex items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-lg transition-colors">
+                    <Download className="w-4 h-4" /> CSV Data
+                </button>
+                {/* Calls native print function instead of buggy canvas */}
+                <button 
+                  onClick={() => window.print()} 
+                  className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"
+                >
+                  <Printer className="w-5 h-5" /> Export Executive PDF
+                </button>
+              </div>
             </header>
             
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 print:grid-cols-2 print:gap-4">
               
               {/* Financial Dashboard Card */}
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
@@ -394,7 +412,7 @@ export default function App() {
                 <div className="h-64 mt-4">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
-                      <Pie data={healthData} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
+                      <Pie data={healthData} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value" isAnimationActive={false}>
                         {healthData.map((entry, index) => (
                           <Cell key={`cell-${index}`} fill={HEALTH_COLORS[index % HEALTH_COLORS.length]} />
                         ))}
@@ -415,7 +433,7 @@ export default function App() {
                       <XAxis dataKey="name" tick={{fontSize: 12}} />
                       <YAxis allowDecimals={false} />
                       <RechartsTooltip cursor={{fill: '#f1f5f9'}} />
-                      <Bar dataKey="count" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="count" fill="#3b82f6" radius={[4, 4, 0, 0]} isAnimationActive={false} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -447,7 +465,7 @@ export default function App() {
 
         {/* BARCODE SCANNER OVERLAY */}
         {scannerMode && (
-          <div className="fixed inset-0 bg-slate-900/90 z-[60] flex flex-col items-center justify-center p-4 backdrop-blur-sm">
+          <div className="fixed inset-0 bg-slate-900/90 z-[60] flex flex-col items-center justify-center p-4 backdrop-blur-sm print:hidden">
             <div className="bg-white p-6 rounded-2xl w-full max-w-md shadow-2xl">
               <div className="flex justify-between items-center mb-4">
                 <h3 className="font-bold text-xl flex items-center gap-2"><Scan className="text-blue-600"/> Scan Barcode</h3>
@@ -459,9 +477,9 @@ export default function App() {
         )}
       </main>
 
-      {/* ADD MODAL */}
+      {/* MODALS - Added print:hidden so they never show up on prints accidentally */}
       {isAddModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
+        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50 print:hidden">
           <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl">
             <h3 className="text-lg font-bold mb-4">Add Material</h3>
             <form onSubmit={addItem} className="space-y-4">
@@ -507,9 +525,8 @@ export default function App() {
         </div>
       )}
 
-      {/* ISSUE MODAL */}
       {issueModal.isOpen && (
-        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
+        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50 print:hidden">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
             <h3 className="text-lg font-bold mb-4">Issue {issueModal.item?.name}</h3>
             <form onSubmit={handleIssue} className="space-y-4">
