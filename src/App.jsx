@@ -8,7 +8,7 @@ import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTo
 
 // 1. PASTE YOUR REAL FIREBASE CONFIG HERE
 const firebaseConfig = {
- apiKey: "AIzaSyA35OTz7lzX8yfH2jEIeeeaWd8nD9fuCwg",
+  apiKey: "AIzaSyA35OTz7lzX8yfH2jEIeeeaWd8nD9fuCwg",
   authDomain: "guwahati-office-inventory.firebaseapp.com",
   projectId: "guwahati-office-inventory",
   storageBucket: "guwahati-office-inventory.firebasestorage.app",
@@ -267,10 +267,9 @@ export default function App() {
     );
   }
 
-  // ADDED print:bg-white to root container so background is clear on print
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row print:bg-white">
-      {/* SIDEBAR - Added print:hidden so it disappears on the PDF */}
+      {/* SIDEBAR - Added print:hidden */}
       <aside className="w-full md:w-64 bg-slate-900 text-slate-300 flex flex-col md:min-h-screen shadow-xl z-10 print:hidden">
         <div className="p-6 flex items-center gap-3 text-white border-b border-slate-800"><Package className="w-8 h-8 text-blue-400" /><span className="font-bold text-lg leading-tight">Cleansing<br/>Inventory</span></div>
         <div className="p-4">
@@ -358,9 +357,22 @@ export default function App() {
                         <td className="p-4 text-center font-bold text-slate-700">{item.quantity}</td>
                         <td className="p-4 text-center">
                           <div className="inline-flex bg-slate-100 rounded-lg p-1 border border-slate-200">
-                            <button onClick={() => setIssueModal({ isOpen: true, item })} className="p-1 hover:bg-white rounded" title="Issue Item"><Minus className="w-4 h-4" /></button>
+                            {/* Minus button works for everyone */}
+                            <button onClick={() => setIssueModal({ isOpen: true, item })} className="p-1 hover:bg-white rounded" title="Issue Item">
+                              <Minus className="w-4 h-4" />
+                            </button>
+                            
                             <span className="w-8 text-center font-semibold text-slate-700">1</span>
-                            <button onClick={() => updateQuantity(item.id, 1)} className="p-1 hover:bg-white rounded"><Plus className="w-4 h-4" /></button>
+                            
+                            {/* Plus button disabled and greyed out if NOT an admin */}
+                            <button 
+                              onClick={() => updateQuantity(item.id, 1)} 
+                              disabled={currentUser.role !== 'admin'}
+                              className={`p-1 rounded transition-colors ${currentUser.role === 'admin' ? 'hover:bg-white text-slate-700' : 'opacity-30 cursor-not-allowed text-slate-400'}`}
+                              title={currentUser.role === 'admin' ? "Quick Add" : "Admin access required"}
+                            >
+                              <Plus className="w-4 h-4" />
+                            </button>
                           </div>
                         </td>
                         {currentUser.role === 'admin' && (
@@ -390,7 +402,7 @@ export default function App() {
                 <button onClick={exportToCSV} className="flex items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-lg transition-colors">
                     <Download className="w-4 h-4" /> CSV Data
                 </button>
-                {/* Calls native print function instead of buggy canvas */}
+                {/* Calls native print function */}
                 <button 
                   onClick={() => window.print()} 
                   className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"
@@ -477,7 +489,7 @@ export default function App() {
         )}
       </main>
 
-      {/* MODALS - Added print:hidden so they never show up on prints accidentally */}
+      {/* MODALS - Added print:hidden */}
       {isAddModalOpen && (
         <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50 print:hidden">
           <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl">
