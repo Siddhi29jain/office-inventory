@@ -5,6 +5,7 @@ import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, si
 import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc, addDoc, getDoc } from 'firebase/firestore';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, Legend } from 'recharts';
+import emailjs from '@emailjs/browser';
 
 // 1. PASTE YOUR REAL FIREBASE CONFIG HERE
 const firebaseConfig = {
@@ -49,7 +50,6 @@ export default function App() {
   const [isSignUp, setIsSignUp] = useState(false);
   const [authError, setAuthError] = useState('');
 
-  // --- Auth & Data Fetching ---
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
@@ -86,7 +86,6 @@ export default function App() {
     return () => { unsubInv(); unsubLogs(); };
   }, [currentUser]);
 
-  // --- Camera Scanner Logic ---
   useEffect(() => {
     if (scannerMode) {
       const scanner = new Html5QrcodeScanner("reader", { qrbox: { width: 250, height: 150 }, fps: 5 }, false);
@@ -107,7 +106,6 @@ export default function App() {
     }
   }, [scannerMode]);
 
-  // --- Actions ---
   const handleAuth = async (e) => {
     e.preventDefault();
     setAuthError('');
@@ -126,6 +124,27 @@ export default function App() {
 
   const logout = () => firebaseSignOut(auth);
 
+  // 3. PASTE YOUR EMAILJS KEYS HERE
+  const checkAndSendAlert = async (item, newQuantity) => {
+    if (newQuantity <= item.minThreshold && item.quantity > item.minThreshold) {
+      try {
+        await emailjs.send(
+          'YOUR_SERVICE_ID',   // Replace this
+          'YOUR_TEMPLATE_ID',  // Replace this
+          {
+            item_name: item.name,
+            current_quantity: newQuantity,
+            min_threshold: item.minThreshold,
+            admin_email: ADMIN_EMAIL, 
+          },
+          'YOUR_PUBLIC_KEY'    // Replace this
+        );
+      } catch (error) {
+        console.error("Alert failed to send:", error);
+      }
+    }
+  };
+
   const logAction = async (action, itemName, quantityChange, financialValue = 0) => {
     await addDoc(getLogsRef(), { 
       timestamp: new Date().toISOString(), 
@@ -142,8 +161,13 @@ export default function App() {
     if (!item) return;
     const newQuantity = Math.max(0, item.quantity + change);
     if (newQuantity === item.quantity) return;
+    
     await setDoc(doc(getInventoryRef(), id), { ...item, quantity: newQuantity });
     await logAction(change > 0 ? 'Added' : 'Removed', item.name, Math.abs(change), Math.abs(change) * (item.pricePerUnit || 0));
+
+    if (change < 0) {
+      await checkAndSendAlert(item, newQuantity);
+    }
   };
 
   const handleIssue = async (e) => {
@@ -159,6 +183,7 @@ export default function App() {
         ...item, quantity: newQuantity, lastIssueDate: formData.get('issueDate'), lastIssuedTo: formData.get('issuedTo')
       });
       await logAction(`Issued to ${formData.get('issuedTo')}`, item.name, issueQty, issueValue);
+      await checkAndSendAlert(item, newQuantity);
       setIssueModal({ isOpen: false, item: null });
     } catch (error) { console.error(error); }
   };
@@ -216,12 +241,11 @@ export default function App() {
 
   const totalCapitalLocked = inventory.reduce((sum, item) => sum + (item.quantity * (item.pricePerUnit || 0)), 0);
 
-  // --- Chart Data Processing ---
   const healthData = [
     { name: 'Healthy Stock', value: inventory.length - lowStockItems.length },
     { name: 'Low Stock', value: lowStockItems.length }
   ];
-  const HEALTH_COLORS = ['#10b981', '#ef4444']; // Emerald, Red
+  const HEALTH_COLORS = ['#10b981', '#ef4444'];
 
   const categoryMap = {};
   inventory.forEach(item => {
@@ -229,39 +253,73 @@ export default function App() {
   });
   const categoryData = Object.keys(categoryMap).map(key => ({ name: key, count: categoryMap[key] }));
 
-  // LOGIN SCREEN
+  // NEW ENTERPRISE LOGIN SCREEN
   if (!currentUser) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-        <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 border border-slate-100">
-          <div className="flex justify-center mb-6"><div className="bg-blue-100 p-3 rounded-full"><Package className="w-10 h-10 text-blue-600" /></div></div>
-          <h1 className="text-2xl font-bold text-center text-slate-800 mb-2">Cleansing Material Hub</h1>
-          
-          <form onSubmit={handleAuth} className="space-y-4 mt-8">
-            {authError && <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg">{authError}</div>}
-            {isSignUp && (
-              <div className="space-y-4 p-4 bg-slate-50 border border-slate-100 rounded-xl mb-4">
-                <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-2">Profile Details</h3>
-                <div><label className="block text-sm font-medium text-slate-700 mb-1">Full Name</label><input type="text" value={name} onChange={e => setName(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 bg-white" required /></div>
-                <div className="flex gap-4">
-                  <div className="flex-1"><label className="block text-sm font-medium text-slate-700 mb-1">Age</label><input type="number" value={age} onChange={e => setAge(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 bg-white" required /></div>
-                  <div className="flex-1">
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Gender</label>
-                    <select value={gender} onChange={e => setGender(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 bg-white" required>
-                      <option value="" disabled>Select...</option>
-                      <option value="Male">Male</option>
-                      <option value="Female">Female</option>
-                      <option value="Other">Other</option>
-                    </select>
+      <div 
+        className="min-h-screen flex items-center justify-center p-4 relative bg-cover bg-center bg-no-repeat"
+        style={{ backgroundImage: "url('/logo-bg.png')" }}
+      >
+        <div className="absolute inset-0 bg-slate-900/70 backdrop-blur-md"></div>
+
+        <div className="relative z-10 max-w-5xl w-full flex flex-col md:flex-row bg-white rounded-3xl shadow-2xl overflow-hidden border border-white/20">
+          <div className="w-full md:w-5/12 bg-slate-900 p-8 md:p-12 text-white flex flex-col justify-center relative">
+            <div className="flex items-center gap-3 mb-8">
+              <div className="bg-blue-500 p-2.5 rounded-xl"><Package className="w-8 h-8 text-white" /></div>
+              <span className="font-bold text-2xl tracking-tight">Cleansing Hub</span>
+            </div>
+
+            <h1 className="text-3xl md:text-4xl font-bold mb-6 leading-tight">Welcome to your command center.</h1>
+            <p className="text-slate-300 text-lg leading-relaxed mb-8">
+              The <strong className="text-white font-semibold">Cleansing Material Hub</strong> is your comprehensive system for facility inventory management. Designed for dynamic operational needs, it empowers teams with real-time stock visibility, automated low-stock alerts, and executive-level financial reporting.
+            </p>
+            <p className="text-blue-400 font-medium tracking-wide text-sm uppercase">Streamline tracking • Drive efficiency</p>
+          </div>
+
+          <div className="w-full md:w-7/12 p-8 md:p-12 flex items-center justify-center bg-slate-50">
+            <div className="w-full max-w-md">
+              <h2 className="text-2xl font-bold text-slate-800 mb-2">
+                {isSignUp ? 'Create your account' : 'Sign in to continue'}
+              </h2>
+              <p className="text-slate-500 mb-8">
+                {isSignUp ? 'Enter your details to get started.' : 'Enter your email and password to access the dashboard.'}
+              </p>
+
+              <form onSubmit={handleAuth} className="space-y-5">
+                {authError && <div className="p-4 bg-red-50 text-red-600 text-sm rounded-xl border border-red-100 font-medium">{authError}</div>}
+                
+                {isSignUp && (
+                  <div className="space-y-4 p-5 bg-white border border-slate-200 rounded-2xl shadow-sm mb-4">
+                    <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Profile Details</h3>
+                    <div><label className="block text-sm font-medium text-slate-700 mb-1">Full Name</label><input type="text" value={name} onChange={e => setName(e.target.value)} className="w-full border border-slate-300 rounded-xl px-4 py-2.5 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all outline-none" required /></div>
+                    <div className="flex gap-4">
+                      <div className="flex-1"><label className="block text-sm font-medium text-slate-700 mb-1">Age</label><input type="number" value={age} onChange={e => setAge(e.target.value)} className="w-full border border-slate-300 rounded-xl px-4 py-2.5 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-blue-500 transition-all outline-none" required /></div>
+                      <div className="flex-1">
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Gender</label>
+                        <select value={gender} onChange={e => setGender(e.target.value)} className="w-full border border-slate-300 rounded-xl px-4 py-2.5 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-blue-500 transition-all outline-none" required>
+                          <option value="" disabled>Select...</option>
+                          <option value="Male">Male</option>
+                          <option value="Female">Female</option>
+                          <option value="Other">Other</option>
+                        </select>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
-            )}
-            <div><label className="block text-sm font-medium text-slate-700 mb-1">Email</label><input type="email" value={email} onChange={e => setEmail(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2" required /></div>
-            <div><label className="block text-sm font-medium text-slate-700 mb-1">Password</label><input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2" required minLength="6" /></div>
-            <button type="submit" className="w-full bg-blue-600 text-white font-medium py-2.5 rounded-lg hover:bg-blue-700">{isSignUp ? 'Create Account Securely' : 'Sign In'}</button>
-          </form>
-          <button onClick={() => { setIsSignUp(!isSignUp); setAuthError(''); }} className="w-full text-center mt-4 text-sm text-slate-500 hover:text-blue-600 font-medium">{isSignUp ? 'Already have an account? Sign in' : 'Need an account? Create one'}</button>
+                )}
+                
+                <div><label className="block text-sm font-medium text-slate-700 mb-1">Email Address</label><input type="email" value={email} onChange={e => setEmail(e.target.value)} className="w-full border border-slate-300 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all" required /></div>
+                <div><label className="block text-sm font-medium text-slate-700 mb-1">Password</label><input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full border border-slate-300 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all" required minLength="6" /></div>
+                
+                <button type="submit" className="w-full bg-blue-600 text-white font-semibold py-3.5 rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-600/30 active:scale-[0.98]">
+                  {isSignUp ? 'Create Account Securely' : 'Secure Login'}
+                </button>
+              </form>
+              
+              <button onClick={() => { setIsSignUp(!isSignUp); setAuthError(''); }} className="w-full text-center mt-6 text-sm text-slate-500 hover:text-blue-600 font-medium transition-colors">
+                {isSignUp ? 'Already have an account? Sign in' : 'Need an account? Create one'}
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -269,7 +327,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row print:bg-white">
-      {/* SIDEBAR - Added print:hidden */}
       <aside className="w-full md:w-64 bg-slate-900 text-slate-300 flex flex-col md:min-h-screen shadow-xl z-10 print:hidden">
         <div className="p-6 flex items-center gap-3 text-white border-b border-slate-800"><Package className="w-8 h-8 text-blue-400" /><span className="font-bold text-lg leading-tight">Cleansing<br/>Inventory</span></div>
         <div className="p-4">
@@ -294,10 +351,7 @@ export default function App() {
         </div>
       </aside>
 
-      {/* MAIN CONTENT - Added print layout overrides */}
       <main className="flex-1 p-4 md:p-8 h-screen overflow-y-auto relative print:p-0 print:h-auto print:overflow-visible">
-        
-        {/* DASHBOARD VIEW */}
         {currentView === 'dashboard' && (
           <div className="max-w-6xl mx-auto space-y-6">
             <header className="mb-8"><h2 className="text-2xl font-bold text-slate-800">Welcome back, {currentUser.name.split(' ')[0]}</h2></header>
@@ -308,7 +362,6 @@ export default function App() {
           </div>
         )}
 
-        {/* INVENTORY VIEW */}
         {currentView === 'inventory' && (
           <div className="max-w-6xl mx-auto flex flex-col h-full">
             <header className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -316,13 +369,7 @@ export default function App() {
               <div className="flex flex-wrap items-center gap-2">
                 <div className="relative flex-1 sm:w-64">
                   <Search className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input 
-                    type="text" 
-                    placeholder="Search name or barcode..." 
-                    value={searchTerm} 
-                    onChange={(e) => setSearchTerm(e.target.value)} 
-                    className="pl-10 pr-4 py-2 border border-slate-200 rounded-lg w-full" 
-                  />
+                  <input type="text" placeholder="Search name or barcode..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-10 pr-4 py-2 border border-slate-200 rounded-lg w-full" />
                 </div>
                 <button onClick={() => setScannerMode('search')} className="flex items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-lg"><Scan className="w-5 h-5" /> Scan</button>
                 {currentUser.role === 'admin' && (
@@ -350,34 +397,17 @@ export default function App() {
                       <tr key={item.id} className="hover:bg-slate-50">
                         <td className="p-4 font-medium text-slate-800">{item.name}</td>
                         <td className="p-4 text-slate-500 hidden md:table-cell font-mono text-xs">{item.barcode || '-'}</td>
-                        <td className="p-4 text-slate-500 hidden sm:table-cell text-right">
-                          {item.pricePerUnit ? `₹${item.pricePerUnit.toFixed(2)}` : '₹0.00'}
-                        </td>
+                        <td className="p-4 text-slate-500 hidden sm:table-cell text-right">{item.pricePerUnit ? `₹${item.pricePerUnit.toFixed(2)}` : '₹0.00'}</td>
                         <td className="p-4 text-center">{item.quantity <= item.minThreshold ? <span className="text-red-600 bg-red-100 px-2 py-1 rounded text-xs font-bold">LOW</span> : <span className="text-emerald-600 bg-emerald-100 px-2 py-1 rounded text-xs font-bold">OK</span>}</td>
                         <td className="p-4 text-center font-bold text-slate-700">{item.quantity}</td>
                         <td className="p-4 text-center">
                           <div className="inline-flex bg-slate-100 rounded-lg p-1 border border-slate-200">
-                            {/* Minus button works for everyone */}
-                            <button onClick={() => setIssueModal({ isOpen: true, item })} className="p-1 hover:bg-white rounded" title="Issue Item">
-                              <Minus className="w-4 h-4" />
-                            </button>
-                            
+                            <button onClick={() => setIssueModal({ isOpen: true, item })} className="p-1 hover:bg-white rounded" title="Issue Item"><Minus className="w-4 h-4" /></button>
                             <span className="w-8 text-center font-semibold text-slate-700">1</span>
-                            
-                            {/* Plus button disabled and greyed out if NOT an admin */}
-                            <button 
-                              onClick={() => updateQuantity(item.id, 1)} 
-                              disabled={currentUser.role !== 'admin'}
-                              className={`p-1 rounded transition-colors ${currentUser.role === 'admin' ? 'hover:bg-white text-slate-700' : 'opacity-30 cursor-not-allowed text-slate-400'}`}
-                              title={currentUser.role === 'admin' ? "Quick Add" : "Admin access required"}
-                            >
-                              <Plus className="w-4 h-4" />
-                            </button>
+                            <button onClick={() => updateQuantity(item.id, 1)} disabled={currentUser.role !== 'admin'} className={`p-1 rounded transition-colors ${currentUser.role === 'admin' ? 'hover:bg-white text-slate-700' : 'opacity-30 cursor-not-allowed text-slate-400'}`}><Plus className="w-4 h-4" /></button>
                           </div>
                         </td>
-                        {currentUser.role === 'admin' && (
-                          <td className="p-4 text-right"><button onClick={() => deleteItem(item.id)} className="text-red-500 p-2 hover:bg-red-50 rounded"><Trash2 className="w-5 h-5" /></button></td>
-                        )}
+                        {currentUser.role === 'admin' && <td className="p-4 text-right"><button onClick={() => deleteItem(item.id)} className="text-red-500 p-2 hover:bg-red-50 rounded"><Trash2 className="w-5 h-5" /></button></td>}
                       </tr>
                     ))}
                   </tbody>
@@ -387,75 +417,29 @@ export default function App() {
           </div>
         )}
 
-        {/* MIS REPORTS VIEW */}
         {currentView === 'reports' && currentUser.role === 'admin' && (
           <div className="max-w-6xl mx-auto space-y-6">
             <header className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div>
-                <h2 className="text-2xl font-bold text-slate-800">Management Information Systems</h2>
-                {/* Print Only Subtitle */}
-                <p className="hidden print:block text-slate-500 mt-1">Report Generated: {new Date().toLocaleString()}</p>
-              </div>
-              
-              {/* Buttons hidden during print */}
+              <div><h2 className="text-2xl font-bold text-slate-800">Management Information Systems</h2><p className="hidden print:block text-slate-500 mt-1">Report Generated: {new Date().toLocaleString()}</p></div>
               <div className="flex gap-3 print:hidden">
-                <button onClick={exportToCSV} className="flex items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-lg transition-colors">
-                    <Download className="w-4 h-4" /> CSV Data
-                </button>
-                {/* Calls native print function */}
-                <button 
-                  onClick={() => window.print()} 
-                  className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"
-                >
-                  <Printer className="w-5 h-5" /> Export Executive PDF
-                </button>
+                <button onClick={exportToCSV} className="flex items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-lg transition-colors"><Download className="w-4 h-4" /> CSV Data</button>
+                <button onClick={() => window.print()} className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"><Printer className="w-5 h-5" /> Export Executive PDF</button>
               </div>
             </header>
-            
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 print:grid-cols-2 print:gap-4">
-              
-              {/* Financial Dashboard Card */}
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
                 <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2"><IndianRupee className="w-5 h-5 text-emerald-600" /> Capital Valuation</h3>
-                <div className="mb-6">
-                  <p className="text-sm text-slate-500 font-medium">Total Capital Locked in Inventory</p>
-                  <p className="text-4xl font-bold text-slate-800 mt-1">₹{totalCapitalLocked.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
-                </div>
-                <div className="h-64 mt-4">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie data={healthData} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value" isAnimationActive={false}>
-                        {healthData.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={HEALTH_COLORS[index % HEALTH_COLORS.length]} />
-                        ))}
-                      </Pie>
-                      <RechartsTooltip />
-                      <Legend />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
+                <div className="mb-6"><p className="text-sm text-slate-500 font-medium">Total Capital Locked in Inventory</p><p className="text-4xl font-bold text-slate-800 mt-1">₹{totalCapitalLocked.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p></div>
+                <div className="h-64 mt-4"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={healthData} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value" isAnimationActive={false}>{healthData.map((entry, index) => (<Cell key={`cell-${index}`} fill={HEALTH_COLORS[index % HEALTH_COLORS.length]} />))}</Pie><RechartsTooltip /><Legend /></PieChart></ResponsiveContainer></div>
               </div>
-
-              {/* Operational Dashboard Card */}
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col">
                 <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2"><BarChart3 className="w-5 h-5 text-blue-600" /> Category Distribution</h3>
-                <div className="flex-1 h-64 min-h-[250px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={categoryData} margin={{ top: 20, right: 30, left: 0, bottom: 5 }}>
-                      <XAxis dataKey="name" tick={{fontSize: 12}} />
-                      <YAxis allowDecimals={false} />
-                      <RechartsTooltip cursor={{fill: '#f1f5f9'}} />
-                      <Bar dataKey="count" fill="#3b82f6" radius={[4, 4, 0, 0]} isAnimationActive={false} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
+                <div className="flex-1 h-64 min-h-[250px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={categoryData} margin={{ top: 20, right: 30, left: 0, bottom: 5 }}><XAxis dataKey="name" tick={{fontSize: 12}} /><YAxis allowDecimals={false} /><RechartsTooltip cursor={{fill: '#f1f5f9'}} /><Bar dataKey="count" fill="#3b82f6" radius={[4, 4, 0, 0]} isAnimationActive={false} /></BarChart></ResponsiveContainer></div>
               </div>
-
             </div>
           </div>
         )}
 
-        {/* LOGS VIEW */}
         {currentView === 'logs' && currentUser.role === 'admin' && (
           <div className="max-w-4xl mx-auto">
             <header className="mb-6"><h2 className="text-2xl font-bold text-slate-800">Activity Logs & Audit Trail</h2></header>
@@ -463,10 +447,7 @@ export default function App() {
               <ul className="divide-y divide-slate-100 max-h-[75vh] overflow-y-auto">
                 {logs.map(log => (
                   <li key={log.id} className="p-4 hover:bg-slate-50">
-                    <div className="flex justify-between">
-                      <p className="text-slate-800"><span className="font-bold">{log.user}</span> {log.action} {log.quantityChange > 0 && `${log.quantityChange} units of`} {log.itemName}</p>
-                      {log.financialValue > 0 && <span className="font-mono text-sm text-slate-500 border border-slate-200 px-2 rounded bg-white">Val: ₹{log.financialValue.toFixed(2)}</span>}
-                    </div>
+                    <div className="flex justify-between"><p className="text-slate-800"><span className="font-bold">{log.user}</span> {log.action} {log.quantityChange > 0 && `${log.quantityChange} units of`} {log.itemName}</p>{log.financialValue > 0 && <span className="font-mono text-sm text-slate-500 border border-slate-200 px-2 rounded bg-white">Val: ₹{log.financialValue.toFixed(2)}</span>}</div>
                     <p className="text-xs text-slate-400 mt-1">{new Date(log.timestamp).toLocaleString()}</p>
                   </li>
                 ))}
@@ -475,63 +456,32 @@ export default function App() {
           </div>
         )}
 
-        {/* BARCODE SCANNER OVERLAY */}
         {scannerMode && (
           <div className="fixed inset-0 bg-slate-900/90 z-[60] flex flex-col items-center justify-center p-4 backdrop-blur-sm print:hidden">
             <div className="bg-white p-6 rounded-2xl w-full max-w-md shadow-2xl">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="font-bold text-xl flex items-center gap-2"><Scan className="text-blue-600"/> Scan Barcode</h3>
-                <button onClick={() => setScannerMode(null)} className="p-2 bg-red-50 text-red-600 rounded-full hover:bg-red-100"><LogOut className="w-5 h-5 rotate-180"/></button>
-              </div>
+              <div className="flex justify-between items-center mb-4"><h3 className="font-bold text-xl flex items-center gap-2"><Scan className="text-blue-600"/> Scan Barcode</h3><button onClick={() => setScannerMode(null)} className="p-2 bg-red-50 text-red-600 rounded-full hover:bg-red-100"><LogOut className="w-5 h-5 rotate-180"/></button></div>
               <div id="reader" className="w-full overflow-hidden rounded-xl border-2 border-slate-200"></div>
             </div>
           </div>
         )}
       </main>
 
-      {/* MODALS - Added print:hidden */}
       {isAddModalOpen && (
         <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50 print:hidden">
           <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl">
             <h3 className="text-lg font-bold mb-4">Add Material</h3>
             <form onSubmit={addItem} className="space-y-4">
-              <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <Barcode className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input name="barcode" type="text" placeholder="Barcode (Optional)" value={tempBarcode} onChange={(e) => setTempBarcode(e.target.value)} className="w-full pl-10 pr-3 py-2 border border-slate-300 rounded-lg font-mono text-sm" />
-                </div>
-                <button type="button" onClick={() => setScannerMode('add')} className="px-4 bg-slate-800 text-white rounded-lg flex items-center gap-2 hover:bg-slate-900"><Scan className="w-4 h-4"/> Scan</button>
-              </div>
+              <div className="flex gap-2"><div className="relative flex-1"><Barcode className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" /><input name="barcode" type="text" placeholder="Barcode (Optional)" value={tempBarcode} onChange={(e) => setTempBarcode(e.target.value)} className="w-full pl-10 pr-3 py-2 border border-slate-300 rounded-lg font-mono text-sm" /></div><button type="button" onClick={() => setScannerMode('add')} className="px-4 bg-slate-800 text-white rounded-lg flex items-center gap-2 hover:bg-slate-900"><Scan className="w-4 h-4"/> Scan</button></div>
               <input required name="name" type="text" placeholder="Material Name" className="w-full border border-slate-300 p-2 rounded-lg" />
               <input required name="category" type="text" placeholder="Category" className="w-full border border-slate-300 p-2 rounded-lg" />
-              
               <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-medium text-slate-500 mb-1">Quantity</label>
-                  <input required name="quantity" type="number" min="0" placeholder="0" className="w-full border border-slate-300 p-2 rounded-lg" />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-slate-500 mb-1">Low Alert At</label>
-                  <input required name="minThreshold" type="number" min="0" placeholder="0" className="w-full border border-slate-300 p-2 rounded-lg" />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-slate-500 mb-1">Unit Type</label>
-                  <input required name="unit" type="text" placeholder="e.g. Liters, Box" className="w-full border border-slate-300 p-2 rounded-lg" />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-slate-500 mb-1">Price Per Unit (₹)</label>
-                  <input required name="pricePerUnit" type="number" step="0.01" min="0" placeholder="0.00" className="w-full border border-slate-300 p-2 rounded-lg" />
-                </div>
+                <div><label className="block text-xs font-medium text-slate-500 mb-1">Quantity</label><input required name="quantity" type="number" min="0" placeholder="0" className="w-full border border-slate-300 p-2 rounded-lg" /></div>
+                <div><label className="block text-xs font-medium text-slate-500 mb-1">Low Alert At</label><input required name="minThreshold" type="number" min="0" placeholder="0" className="w-full border border-slate-300 p-2 rounded-lg" /></div>
+                <div><label className="block text-xs font-medium text-slate-500 mb-1">Unit Type</label><input required name="unit" type="text" placeholder="e.g. Liters, Box" className="w-full border border-slate-300 p-2 rounded-lg" /></div>
+                <div><label className="block text-xs font-medium text-slate-500 mb-1">Price Per Unit (₹)</label><input required name="pricePerUnit" type="number" step="0.01" min="0" placeholder="0.00" className="w-full border border-slate-300 p-2 rounded-lg" /></div>
               </div>
-              
-              <div>
-                <label className="block text-xs font-medium text-slate-500 mb-1">Date of Purchase</label>
-                <input required name="purchaseDate" type="date" defaultValue={new Date().toISOString().split('T')[0]} className="w-full border border-slate-300 p-2 rounded-lg" />
-              </div>
-              <div className="flex gap-2 pt-2">
-                <button type="button" onClick={() => setIsAddModalOpen(false)} className="flex-1 p-2 border border-slate-300 rounded-lg hover:bg-slate-50">Cancel</button>
-                <button type="submit" className="flex-1 p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Save Asset</button>
-              </div>
+              <div><label className="block text-xs font-medium text-slate-500 mb-1">Date of Purchase</label><input required name="purchaseDate" type="date" defaultValue={new Date().toISOString().split('T')[0]} className="w-full border border-slate-300 p-2 rounded-lg" /></div>
+              <div className="flex gap-2 pt-2"><button type="button" onClick={() => setIsAddModalOpen(false)} className="flex-1 p-2 border border-slate-300 rounded-lg hover:bg-slate-50">Cancel</button><button type="submit" className="flex-1 p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Save Asset</button></div>
             </form>
           </div>
         </div>
@@ -545,10 +495,7 @@ export default function App() {
               <div><label className="block text-sm font-medium text-slate-700 mb-1">Quantity to Issue</label><input required name="issueQuantity" type="number" min="1" max={issueModal.item?.quantity} defaultValue="1" className="w-full border border-slate-300 rounded-lg px-3 py-2" /></div>
               <div><label className="block text-sm font-medium text-slate-700 mb-1">Issued To (Name)</label><input required name="issuedTo" type="text" placeholder="e.g. John Doe" className="w-full border border-slate-300 rounded-lg px-3 py-2" /></div>
               <div><label className="block text-sm font-medium text-slate-700 mb-1">Date of Issue</label><input required name="issueDate" type="date" defaultValue={new Date().toISOString().split('T')[0]} className="w-full border border-slate-300 rounded-lg px-3 py-2" /></div>
-              <div className="pt-2 flex gap-3">
-                <button type="button" onClick={() => setIssueModal({ isOpen: false, item: null })} className="flex-1 px-4 py-2 border rounded-lg hover:bg-slate-50">Cancel</button>
-                <button type="submit" className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Confirm Issue</button>
-              </div>
+              <div className="pt-2 flex gap-3"><button type="button" onClick={() => setIssueModal({ isOpen: false, item: null })} className="flex-1 px-4 py-2 border rounded-lg hover:bg-slate-50">Cancel</button><button type="submit" className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Confirm Issue</button></div>
             </form>
           </div>
         </div>
