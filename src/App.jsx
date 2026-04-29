@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Package, ShieldAlert, Users, Clock, LogOut, Plus, Trash2, Minus, AlertTriangle, CheckCircle2, Search, LayoutDashboard, ClipboardList, BarChart3, Download, Scan, Barcode, IndianRupee, Printer } from 'lucide-react';
-import { initializeApp } from 'firebase/app';
-import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut as firebaseSignOut, onAuthStateChanged } from 'firebase/auth';
+import { Package, ShieldAlert, Users, Clock, LogOut, Plus, Trash2, Minus, AlertTriangle, CheckCircle2, Search, LayoutDashboard, ClipboardList, BarChart3, Download, Scan, Barcode, IndianRupee, Printer, UserPlus } from 'lucide-react';
+import { initializeApp, getApps, getApp } from 'firebase/app';
+import { getAuth, signInWithEmailAndPassword, signOut as firebaseSignOut, onAuthStateChanged, createUserWithEmailAndPassword } from 'firebase/auth';
 import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc, addDoc, getDoc } from 'firebase/firestore';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, Legend } from 'recharts';
@@ -26,12 +26,14 @@ const db = getFirestore(app);
 
 const getInventoryRef = () => collection(db, 'inventory');
 const getLogsRef = () => collection(db, 'logs');
+const getUsersRef = () => collection(db, 'users');
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState(null);
   const [currentView, setCurrentView] = useState('dashboard');
   const [inventory, setInventory] = useState([]);
   const [logs, setLogs] = useState([]);
+  const [systemUsers, setSystemUsers] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [issueModal, setIssueModal] = useState({ isOpen: false, item: null });
@@ -41,14 +43,19 @@ export default function App() {
   const [scannerMode, setScannerMode] = useState(null);
   const [tempBarcode, setTempBarcode] = useState('');
 
-  // Auth & Profile State
+  // Auth State (Login Only)
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [name, setName] = useState('');
-  const [age, setAge] = useState('');
-  const [gender, setGender] = useState('');
-  const [isSignUp, setIsSignUp] = useState(false);
   const [authError, setAuthError] = useState('');
+
+  // Admin User Creation State
+  const [newUserName, setNewUserName] = useState('');
+  const [newUserEmail, setNewUserEmail] = useState('');
+  const [newUserPassword, setNewUserPassword] = useState('');
+  const [newUserRole, setNewUserRole] = useState('staff');
+  const [newUserAge, setNewUserAge] = useState('');
+  const [newUserGender, setNewUserGender] = useState('');
+  const [userCreationStatus, setUserCreationStatus] = useState({ type: '', msg: '' });
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -83,7 +90,11 @@ export default function App() {
       logItems.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
       setLogs(logItems);
     });
-    return () => { unsubInv(); unsubLogs(); };
+    const unsubUsers = onSnapshot(getUsersRef(), (snapshot) => {
+      const userItems = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setSystemUsers(userItems);
+    });
+    return () => { unsubInv(); unsubLogs(); unsubUsers(); };
   }, [currentUser]);
 
   useEffect(() => {
@@ -106,20 +117,46 @@ export default function App() {
     }
   }, [scannerMode]);
 
-  const handleAuth = async (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
     setAuthError('');
     try {
-      if (isSignUp) {
-        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-        await setDoc(doc(db, 'users', userCredential.user.uid), {
-          name: name, age: parseInt(age), gender: gender, email: email,
-          role: email === ADMIN_EMAIL ? 'admin' : 'staff', createdAt: new Date().toISOString()
-        });
-      } else {
-        await signInWithEmailAndPassword(auth, email, password);
-      }
+      await signInWithEmailAndPassword(auth, email, password);
     } catch (err) { setAuthError(err.message.replace('Firebase: ', '')); }
+  };
+
+  const handleAdminCreateUser = async (e) => {
+    e.preventDefault();
+    setUserCreationStatus({ type: '', msg: '' });
+    
+    try {
+      // Create a secondary app instance so the admin doesn't get logged out
+      const secondaryApp = getApps().length > 1 ? getApp("Secondary") : initializeApp(firebaseConfig, "Secondary");
+      const secondaryAuth = getAuth(secondaryApp);
+      
+      const userCredential = await createUserWithEmailAndPassword(secondaryAuth, newUserEmail, newUserPassword);
+      
+      // Save user details to Firestore
+      await setDoc(doc(db, 'users', userCredential.user.uid), {
+        name: newUserName, 
+        age: parseInt(newUserAge), 
+        gender: newUserGender, 
+        email: newUserEmail,
+        role: newUserRole, 
+        createdAt: new Date().toISOString()
+      });
+
+      // Log out of the secondary instance
+      await firebaseSignOut(secondaryAuth);
+      
+      setUserCreationStatus({ type: 'success', msg: `Successfully created ${newUserRole} account for ${newUserName}!` });
+      
+      // Clear form
+      setNewUserName(''); setNewUserEmail(''); setNewUserPassword(''); setNewUserAge(''); setNewUserGender('');
+      
+    } catch (err) {
+      setUserCreationStatus({ type: 'error', msg: err.message.replace('Firebase: ', '') });
+    }
   };
 
   const logout = () => firebaseSignOut(auth);
@@ -129,15 +166,15 @@ export default function App() {
     if (newQuantity <= item.minThreshold && item.quantity > item.minThreshold) {
       try {
         await emailjs.send(
-          'YOUR_SERVICE_ID',   // Replace this
-          'YOUR_TEMPLATE_ID',  // Replace this
+          'YOUR_SERVICE_ID',
+          'YOUR_TEMPLATE_ID',
           {
             item_name: item.name,
             current_quantity: newQuantity,
             min_threshold: item.minThreshold,
             admin_email: ADMIN_EMAIL, 
           },
-          'YOUR_PUBLIC_KEY'    // Replace this
+          'YOUR_PUBLIC_KEY'
         );
       } catch (error) {
         console.error("Alert failed to send:", error);
@@ -240,20 +277,16 @@ export default function App() {
   );
 
   const totalCapitalLocked = inventory.reduce((sum, item) => sum + (item.quantity * (item.pricePerUnit || 0)), 0);
-
   const healthData = [
     { name: 'Healthy Stock', value: inventory.length - lowStockItems.length },
     { name: 'Low Stock', value: lowStockItems.length }
   ];
   const HEALTH_COLORS = ['#10b981', '#ef4444'];
-
   const categoryMap = {};
-  inventory.forEach(item => {
-    categoryMap[item.category] = (categoryMap[item.category] || 0) + 1;
-  });
+  inventory.forEach(item => { categoryMap[item.category] = (categoryMap[item.category] || 0) + 1; });
   const categoryData = Object.keys(categoryMap).map(key => ({ name: key, count: categoryMap[key] }));
 
-  // NEW ENTERPRISE LOGIN SCREEN
+  // LOGIN SCREEN (Strictly Login Only Now)
   if (!currentUser) {
     return (
       <div 
@@ -278,46 +311,18 @@ export default function App() {
 
           <div className="w-full md:w-7/12 p-8 md:p-12 flex items-center justify-center bg-slate-50">
             <div className="w-full max-w-md">
-              <h2 className="text-2xl font-bold text-slate-800 mb-2">
-                {isSignUp ? 'Create your account' : 'Sign in to continue'}
-              </h2>
-              <p className="text-slate-500 mb-8">
-                {isSignUp ? 'Enter your details to get started.' : 'Enter your email and password to access the dashboard.'}
-              </p>
+              <h2 className="text-2xl font-bold text-slate-800 mb-2">System Access</h2>
+              <p className="text-slate-500 mb-8">Enter your authorized email and password.</p>
 
-              <form onSubmit={handleAuth} className="space-y-5">
+              <form onSubmit={handleLogin} className="space-y-5">
                 {authError && <div className="p-4 bg-red-50 text-red-600 text-sm rounded-xl border border-red-100 font-medium">{authError}</div>}
-                
-                {isSignUp && (
-                  <div className="space-y-4 p-5 bg-white border border-slate-200 rounded-2xl shadow-sm mb-4">
-                    <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Profile Details</h3>
-                    <div><label className="block text-sm font-medium text-slate-700 mb-1">Full Name</label><input type="text" value={name} onChange={e => setName(e.target.value)} className="w-full border border-slate-300 rounded-xl px-4 py-2.5 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all outline-none" required /></div>
-                    <div className="flex gap-4">
-                      <div className="flex-1"><label className="block text-sm font-medium text-slate-700 mb-1">Age</label><input type="number" value={age} onChange={e => setAge(e.target.value)} className="w-full border border-slate-300 rounded-xl px-4 py-2.5 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-blue-500 transition-all outline-none" required /></div>
-                      <div className="flex-1">
-                        <label className="block text-sm font-medium text-slate-700 mb-1">Gender</label>
-                        <select value={gender} onChange={e => setGender(e.target.value)} className="w-full border border-slate-300 rounded-xl px-4 py-2.5 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-blue-500 transition-all outline-none" required>
-                          <option value="" disabled>Select...</option>
-                          <option value="Male">Male</option>
-                          <option value="Female">Female</option>
-                          <option value="Other">Other</option>
-                        </select>
-                      </div>
-                    </div>
-                  </div>
-                )}
                 
                 <div><label className="block text-sm font-medium text-slate-700 mb-1">Email Address</label><input type="email" value={email} onChange={e => setEmail(e.target.value)} className="w-full border border-slate-300 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all" required /></div>
                 <div><label className="block text-sm font-medium text-slate-700 mb-1">Password</label><input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full border border-slate-300 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all" required minLength="6" /></div>
                 
-                <button type="submit" className="w-full bg-blue-600 text-white font-semibold py-3.5 rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-600/30 active:scale-[0.98]">
-                  {isSignUp ? 'Create Account Securely' : 'Secure Login'}
-                </button>
+                <button type="submit" className="w-full bg-blue-600 text-white font-semibold py-3.5 rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-600/30 active:scale-[0.98]">Secure Login</button>
               </form>
-              
-              <button onClick={() => { setIsSignUp(!isSignUp); setAuthError(''); }} className="w-full text-center mt-6 text-sm text-slate-500 hover:text-blue-600 font-medium transition-colors">
-                {isSignUp ? 'Already have an account? Sign in' : 'Need an account? Create one'}
-              </button>
+              <p className="text-center mt-6 text-sm text-slate-500">Contact your System Administrator if you need an account.</p>
             </div>
           </div>
         </div>
@@ -337,6 +342,7 @@ export default function App() {
             {currentUser.role === 'admin' && (
               <>
                 <button onClick={() => setCurrentView('reports')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${currentView === 'reports' ? 'bg-blue-600 text-white' : 'hover:bg-slate-800 hover:text-white'}`}><BarChart3 className="w-5 h-5" /> MIS Reports</button>
+                <button onClick={() => setCurrentView('users')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${currentView === 'users' ? 'bg-blue-600 text-white' : 'hover:bg-slate-800 hover:text-white'}`}><Users className="w-5 h-5" /> Manage Users</button>
                 <button onClick={() => setCurrentView('logs')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${currentView === 'logs' ? 'bg-blue-600 text-white' : 'hover:bg-slate-800 hover:text-white'}`}><Clock className="w-5 h-5" /> Activity Logs</button>
               </>
             )}
@@ -352,6 +358,7 @@ export default function App() {
       </aside>
 
       <main className="flex-1 p-4 md:p-8 h-screen overflow-y-auto relative print:p-0 print:h-auto print:overflow-visible">
+        {/* DASHBOARD */}
         {currentView === 'dashboard' && (
           <div className="max-w-6xl mx-auto space-y-6">
             <header className="mb-8"><h2 className="text-2xl font-bold text-slate-800">Welcome back, {currentUser.name.split(' ')[0]}</h2></header>
@@ -362,6 +369,7 @@ export default function App() {
           </div>
         )}
 
+        {/* INVENTORY */}
         {currentView === 'inventory' && (
           <div className="max-w-6xl mx-auto flex flex-col h-full">
             <header className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -417,6 +425,87 @@ export default function App() {
           </div>
         )}
 
+        {/* ADMIN: USER MANAGEMENT */}
+        {currentView === 'users' && currentUser.role === 'admin' && (
+          <div className="max-w-6xl mx-auto space-y-6">
+            <header className="mb-6"><h2 className="text-2xl font-bold text-slate-800">User Management</h2></header>
+            
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Create User Form */}
+              <div className="lg:col-span-1 bg-white p-6 rounded-2xl shadow-sm border border-slate-200 h-fit">
+                <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2"><UserPlus className="w-5 h-5 text-blue-600" /> Create New Account</h3>
+                
+                {userCreationStatus.msg && (
+                  <div className={`p-3 mb-4 text-sm rounded-lg border font-medium ${userCreationStatus.type === 'success' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
+                    {userCreationStatus.msg}
+                  </div>
+                )}
+
+                <form onSubmit={handleAdminCreateUser} className="space-y-4">
+                  <div><label className="block text-xs font-medium text-slate-500 mb-1">Full Name</label><input required type="text" value={newUserName} onChange={e => setNewUserName(e.target.value)} className="w-full border border-slate-300 p-2.5 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" /></div>
+                  
+                  <div className="flex gap-3">
+                    <div className="flex-1"><label className="block text-xs font-medium text-slate-500 mb-1">Age</label><input required type="number" value={newUserAge} onChange={e => setNewUserAge(e.target.value)} className="w-full border border-slate-300 p-2.5 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" /></div>
+                    <div className="flex-1"><label className="block text-xs font-medium text-slate-500 mb-1">Gender</label>
+                      <select required value={newUserGender} onChange={e => setNewUserGender(e.target.value)} className="w-full border border-slate-300 p-2.5 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+                        <option value="" disabled>Select...</option><option value="Male">Male</option><option value="Female">Female</option><option value="Other">Other</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div><label className="block text-xs font-medium text-slate-500 mb-1">Role</label>
+                    <select required value={newUserRole} onChange={e => setNewUserRole(e.target.value)} className="w-full border border-slate-300 p-2.5 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+                      <option value="staff">Staff (Standard Access)</option>
+                      <option value="admin">Administrator (Full Access)</option>
+                    </select>
+                  </div>
+
+                  <hr className="border-slate-100 my-2" />
+
+                  <div><label className="block text-xs font-medium text-slate-500 mb-1">Login Email</label><input required type="email" value={newUserEmail} onChange={e => setNewUserEmail(e.target.value)} className="w-full border border-slate-300 p-2.5 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" /></div>
+                  <div><label className="block text-xs font-medium text-slate-500 mb-1">Temporary Password</label><input required type="text" value={newUserPassword} onChange={e => setNewUserPassword(e.target.value)} minLength="6" className="w-full border border-slate-300 p-2.5 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" /></div>
+                  
+                  <button type="submit" className="w-full bg-slate-800 text-white font-medium py-2.5 rounded-lg hover:bg-slate-900 transition-colors mt-2">Generate Account</button>
+                </form>
+              </div>
+
+              {/* Active Users List */}
+              <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                <div className="p-6 border-b border-slate-200">
+                  <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2"><Users className="w-5 h-5 text-emerald-600" /> Active System Personnel</h3>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-slate-50 border-b border-slate-200 text-slate-600">
+                      <tr>
+                        <th className="p-4 font-semibold">Name</th>
+                        <th className="p-4 font-semibold">Email</th>
+                        <th className="p-4 font-semibold">Role</th>
+                        <th className="p-4 font-semibold">Date Added</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {systemUsers.map(user => (
+                        <tr key={user.id} className="hover:bg-slate-50">
+                          <td className="p-4 font-medium text-slate-800">{user.name}</td>
+                          <td className="p-4 text-slate-500">{user.email}</td>
+                          <td className="p-4">
+                            <span className={`px-2 py-1 rounded text-xs font-bold uppercase tracking-wider ${user.role === 'admin' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                              {user.role}
+                            </span>
+                          </td>
+                          <td className="p-4 text-slate-500">{user.createdAt ? new Date(user.createdAt).toLocaleDateString() : 'N/A'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* REPORTS */}
         {currentView === 'reports' && currentUser.role === 'admin' && (
           <div className="max-w-6xl mx-auto space-y-6">
             <header className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -440,6 +529,7 @@ export default function App() {
           </div>
         )}
 
+        {/* LOGS */}
         {currentView === 'logs' && currentUser.role === 'admin' && (
           <div className="max-w-4xl mx-auto">
             <header className="mb-6"><h2 className="text-2xl font-bold text-slate-800">Activity Logs & Audit Trail</h2></header>
@@ -466,6 +556,7 @@ export default function App() {
         )}
       </main>
 
+      {/* MODALS */}
       {isAddModalOpen && (
         <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50 print:hidden">
           <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl">
