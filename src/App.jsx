@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Package, ShieldAlert, Users, Clock, LogOut, Plus, Trash2, Minus, AlertTriangle, CheckCircle2, Search, LayoutDashboard, ClipboardList, BarChart3, Download, Scan, Barcode, IndianRupee, Printer, UserPlus } from 'lucide-react';
+import { Package, ShieldAlert, Users, Clock, LogOut, Plus, Trash2, Minus, AlertTriangle, CheckCircle2, Search, LayoutDashboard, ClipboardList, BarChart3, Download, Scan, Barcode, IndianRupee, Printer, UserPlus, ArrowLeft } from 'lucide-react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth, signInWithEmailAndPassword, signOut as firebaseSignOut, onAuthStateChanged, createUserWithEmailAndPassword } from 'firebase/auth';
 import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc, addDoc, getDoc } from 'firebase/firestore';
@@ -35,20 +35,20 @@ export default function App() {
   const [logs, setLogs] = useState([]);
   const [systemUsers, setSystemUsers] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
+  
+  const [stockFilter, setStockFilter] = useState('all'); 
+  
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [issueModal, setIssueModal] = useState({ isOpen: false, item: null });
   const [isLoading, setIsLoading] = useState(true);
 
-  // Scanner State
   const [scannerMode, setScannerMode] = useState(null);
   const [tempBarcode, setTempBarcode] = useState('');
 
-  // Auth State
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState('');
 
-  // Admin User Creation State
   const [newUserName, setNewUserName] = useState('');
   const [newUserEmail, setNewUserEmail] = useState('');
   const [newUserPassword, setNewUserPassword] = useState('');
@@ -64,15 +64,9 @@ export default function App() {
         if (userDoc.exists()) {
           setCurrentUser({ uid: user.uid, ...userDoc.data() });
         } else {
-          // If no user doc exists, check if it's the master admin fallback
           if (user.email === ADMIN_EMAIL) {
-            setCurrentUser({ 
-              uid: user.uid, 
-              role: 'admin', 
-              name: 'Master Admin' 
-            });
+            setCurrentUser({ uid: user.uid, role: 'admin', name: 'Master Admin' });
           } else {
-            // SECURITY LOCK: User authenticated, but their database profile was deleted. Revoke access.
             await firebaseSignOut(auth);
             setCurrentUser(null);
             setAuthError('Access Denied: Your account has been removed by the Administrator.');
@@ -111,13 +105,8 @@ export default function App() {
       scanner.render(
         (decodedText) => {
           scanner.clear();
-          if (scannerMode === 'search') {
-            setSearchTerm(decodedText);
-            setScannerMode(null);
-          } else if (scannerMode === 'add') {
-            setTempBarcode(decodedText);
-            setScannerMode(null);
-          }
+          if (scannerMode === 'search') { setSearchTerm(decodedText); setScannerMode(null); } 
+          else if (scannerMode === 'add') { setTempBarcode(decodedText); setScannerMode(null); }
         },
         (err) => {}
       );
@@ -126,53 +115,34 @@ export default function App() {
   }, [scannerMode]);
 
   const handleLogin = async (e) => {
-    e.preventDefault();
-    setAuthError('');
-    try {
-      await signInWithEmailAndPassword(auth, email, password);
-    } catch (err) { setAuthError(err.message.replace('Firebase: ', '')); }
+    e.preventDefault(); setAuthError('');
+    try { await signInWithEmailAndPassword(auth, email, password); } 
+    catch (err) { setAuthError(err.message.replace('Firebase: ', '')); }
   };
 
   const handleAdminCreateUser = async (e) => {
-    e.preventDefault();
-    setUserCreationStatus({ type: '', msg: '' });
-    
+    e.preventDefault(); setUserCreationStatus({ type: '', msg: '' });
     try {
       const secondaryApp = getApps().length > 1 ? getApp("Secondary") : initializeApp(firebaseConfig, "Secondary");
       const secondaryAuth = getAuth(secondaryApp);
-      
       const userCredential = await createUserWithEmailAndPassword(secondaryAuth, newUserEmail, newUserPassword);
-      
       await setDoc(doc(db, 'users', userCredential.user.uid), {
-        name: newUserName, 
-        age: parseInt(newUserAge), 
-        gender: newUserGender, 
-        email: newUserEmail,
-        role: newUserRole, 
-        createdAt: new Date().toISOString()
+        name: newUserName, age: parseInt(newUserAge), gender: newUserGender, email: newUserEmail, role: newUserRole, createdAt: new Date().toISOString()
       });
-
       await firebaseSignOut(secondaryAuth);
       setUserCreationStatus({ type: 'success', msg: `Successfully created ${newUserRole} account for ${newUserName}!` });
       setNewUserName(''); setNewUserEmail(''); setNewUserPassword(''); setNewUserAge(''); setNewUserGender('');
-    } catch (err) {
-      setUserCreationStatus({ type: 'error', msg: err.message.replace('Firebase: ', '') });
-    }
+    } catch (err) { setUserCreationStatus({ type: 'error', msg: err.message.replace('Firebase: ', '') }); }
   };
 
   const deleteSystemUser = async (targetUserId, targetUserName) => {
-    if (targetUserId === currentUser.uid) {
-      alert("Security Lock: You cannot delete your own active session.");
-      return;
-    }
+    if (targetUserId === currentUser.uid) { alert("Security Lock: You cannot delete your own active session."); return; }
     if (window.confirm(`Are you sure you want to permanently revoke access for ${targetUserName}?`)) {
       try {
         await deleteDoc(doc(db, 'users', targetUserId));
         setUserCreationStatus({ type: 'success', msg: `Access permanently revoked for ${targetUserName}.` });
         await logAction('Revoked User Access', targetUserName, 0, 0);
-      } catch (error) {
-        setUserCreationStatus({ type: 'error', msg: 'Failed to revoke access.' });
-      }
+      } catch (error) { setUserCreationStatus({ type: 'error', msg: 'Failed to revoke access.' }); }
     }
   };
 
@@ -182,12 +152,7 @@ export default function App() {
   const checkAndSendAlert = async (item, newQuantity) => {
     if (newQuantity <= item.minThreshold && item.quantity > item.minThreshold) {
       try {
-        await emailjs.send(
-          'YOUR_SERVICE_ID',
-          'YOUR_TEMPLATE_ID',
-          { item_name: item.name, current_quantity: newQuantity, min_threshold: item.minThreshold, admin_email: ADMIN_EMAIL },
-          'YOUR_PUBLIC_KEY'
-        );
+        await emailjs.send('YOUR_SERVICE_ID', 'YOUR_TEMPLATE_ID', { item_name: item.name, current_quantity: newQuantity, min_threshold: item.minThreshold, admin_email: ADMIN_EMAIL }, 'YOUR_PUBLIC_KEY');
       } catch (error) { console.error("Alert failed:", error); }
     }
   };
@@ -197,40 +162,31 @@ export default function App() {
   };
 
   const updateQuantity = async (id, change) => {
-    const item = inventory.find(i => i.id === id);
-    if (!item) return;
-    const newQuantity = Math.max(0, item.quantity + change);
-    if (newQuantity === item.quantity) return;
+    const item = inventory.find(i => i.id === id); if (!item) return;
+    const newQuantity = Math.max(0, item.quantity + change); if (newQuantity === item.quantity) return;
     await setDoc(doc(getInventoryRef(), id), { ...item, quantity: newQuantity });
     await logAction(change > 0 ? 'Added' : 'Removed', item.name, Math.abs(change), Math.abs(change) * (item.pricePerUnit || 0));
     if (change < 0) await checkAndSendAlert(item, newQuantity);
   };
 
   const handleIssue = async (e) => {
-    e.preventDefault();
-    const formData = new FormData(e.target);
-    const issueQty = parseInt(formData.get('issueQuantity'));
-    const item = issueModal.item;
-    const newQuantity = Math.max(0, item.quantity - issueQty);
-    const issueValue = issueQty * (item.pricePerUnit || 0);
+    e.preventDefault(); const formData = new FormData(e.target);
+    const issueQty = parseInt(formData.get('issueQuantity')); const item = issueModal.item;
+    const newQuantity = Math.max(0, item.quantity - issueQty); const issueValue = issueQty * (item.pricePerUnit || 0);
     try {
       await setDoc(doc(getInventoryRef(), item.id), { ...item, quantity: newQuantity, lastIssueDate: formData.get('issueDate'), lastIssuedTo: formData.get('issuedTo') });
       await logAction(`Issued to ${formData.get('issuedTo')}`, item.name, issueQty, issueValue);
-      await checkAndSendAlert(item, newQuantity);
-      setIssueModal({ isOpen: false, item: null });
+      await checkAndSendAlert(item, newQuantity); setIssueModal({ isOpen: false, item: null });
     } catch (error) { console.error(error); }
   };
 
   const deleteItem = async (id) => {
-    const item = inventory.find(i => i.id === id);
-    if (!item) return;
-    await deleteDoc(doc(getInventoryRef(), id));
-    await logAction('Deleted Item', item.name, 0, 0);
+    const item = inventory.find(i => i.id === id); if (!item) return;
+    await deleteDoc(doc(getInventoryRef(), id)); await logAction('Deleted Item', item.name, 0, 0);
   };
 
   const addItem = async (e) => {
-    e.preventDefault();
-    const formData = new FormData(e.target);
+    e.preventDefault(); const formData = new FormData(e.target);
     const newItem = {
       name: formData.get('name'), category: formData.get('category'), quantity: parseInt(formData.get('quantity')), unit: formData.get('unit'),
       minThreshold: parseInt(formData.get('minThreshold')), pricePerUnit: parseFloat(formData.get('pricePerUnit')) || 0,
@@ -238,31 +194,29 @@ export default function App() {
     };
     await addDoc(getInventoryRef(), newItem);
     await logAction('Created New Item', newItem.name, newItem.quantity, newItem.quantity * newItem.pricePerUnit);
-    setIsAddModalOpen(false);
-    setTempBarcode('');
+    setIsAddModalOpen(false); setTempBarcode('');
   };
 
   const exportToCSV = () => {
     const headers = ['Barcode', 'Material Name', 'Category', 'Current Quantity', 'Unit', 'Unit Price (INR)', 'Total Value (INR)', 'Status', 'Date of Purchase', 'Last Issued To', 'Last Issue Date'];
-    const rows = inventory.map(item => [
-      `"${item.barcode || 'N/A'}"`, `"${item.name}"`, `"${item.category}"`, item.quantity, `"${item.unit}"`,
-      item.pricePerUnit || 0, (item.quantity * (item.pricePerUnit || 0)).toFixed(2),
-      item.quantity <= item.minThreshold ? 'LOW STOCK' : 'OK', `"${item.purchaseDate || 'N/A'}"`, `"${item.lastIssuedTo || 'N/A'}"`, `"${item.lastIssueDate || 'N/A'}"`
-    ]);
+    const rows = inventory.map(item => [ `"${item.barcode || 'N/A'}"`, `"${item.name}"`, `"${item.category}"`, item.quantity, `"${item.unit}"`, item.pricePerUnit || 0, (item.quantity * (item.pricePerUnit || 0)).toFixed(2), item.quantity <= item.minThreshold ? 'LOW STOCK' : 'OK', `"${item.purchaseDate || 'N/A'}"`, `"${item.lastIssuedTo || 'N/A'}"`, `"${item.lastIssueDate || 'N/A'}"` ]);
     const csvContent = "data:text/csv;charset=utf-8," + [headers.join(','), ...rows.map(e => e.join(','))].join("\n");
-    const link = document.createElement("a");
-    link.setAttribute("href", encodeURI(csvContent));
-    link.setAttribute("download", `Inventory_Financial_MIS_${new Date().toISOString().split('T')[0]}.csv`);
+    const link = document.createElement("a"); link.setAttribute("href", encodeURI(csvContent)); link.setAttribute("download", `Inventory_Financial_MIS_${new Date().toISOString().split('T')[0]}.csv`);
     document.body.appendChild(link); link.click(); document.body.removeChild(link);
   };
 
   const lowStockItems = inventory.filter(item => item.quantity <= item.minThreshold);
-  const filteredInventory = inventory.filter(item => item.name.toLowerCase().includes(searchTerm.toLowerCase()) || item.category.toLowerCase().includes(searchTerm.toLowerCase()) || (item.barcode && item.barcode.includes(searchTerm)));
+  
+  const filteredInventory = inventory.filter(item => {
+    const matchesSearch = item.name.toLowerCase().includes(searchTerm.toLowerCase()) || item.category.toLowerCase().includes(searchTerm.toLowerCase()) || (item.barcode && item.barcode.includes(searchTerm));
+    const matchesStock = stockFilter === 'low' ? item.quantity <= item.minThreshold : true;
+    return matchesSearch && matchesStock;
+  });
+
   const totalCapitalLocked = inventory.reduce((sum, item) => sum + (item.quantity * (item.pricePerUnit || 0)), 0);
   const healthData = [{ name: 'Healthy Stock', value: inventory.length - lowStockItems.length }, { name: 'Low Stock', value: lowStockItems.length }];
   const HEALTH_COLORS = ['#10b981', '#ef4444'];
-  const categoryMap = {};
-  inventory.forEach(item => { categoryMap[item.category] = (categoryMap[item.category] || 0) + 1; });
+  const categoryMap = {}; inventory.forEach(item => { categoryMap[item.category] = (categoryMap[item.category] || 0) + 1; });
   const categoryData = Object.keys(categoryMap).map(key => ({ name: key, count: categoryMap[key] }));
 
   if (!currentUser) {
@@ -302,7 +256,7 @@ export default function App() {
           <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 px-3">Main Menu</div>
           <nav className="space-y-1">
             <button onClick={() => setCurrentView('dashboard')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${currentView === 'dashboard' ? 'bg-blue-600 text-white' : 'hover:bg-slate-800 hover:text-white'}`}><LayoutDashboard className="w-5 h-5" /> Dashboard</button>
-            <button onClick={() => setCurrentView('inventory')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${currentView === 'inventory' ? 'bg-blue-600 text-white' : 'hover:bg-slate-800 hover:text-white'}`}><ClipboardList className="w-5 h-5" /> Manage Inventory</button>
+            <button onClick={() => { setCurrentView('inventory'); setStockFilter('all'); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${currentView === 'inventory' ? 'bg-blue-600 text-white' : 'hover:bg-slate-800 hover:text-white'}`}><ClipboardList className="w-5 h-5" /> Manage Inventory</button>
             {currentUser.role === 'admin' && (
               <>
                 <button onClick={() => setCurrentView('reports')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${currentView === 'reports' ? 'bg-blue-600 text-white' : 'hover:bg-slate-800 hover:text-white'}`}><BarChart3 className="w-5 h-5" /> MIS Reports</button>
@@ -313,25 +267,89 @@ export default function App() {
           </nav>
         </div>
         <div className="mt-auto p-4 border-t border-slate-800">
-          <div className="flex items-center gap-3 mb-4 px-3">
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-white ${currentUser.role === 'admin' ? 'bg-blue-500' : 'bg-emerald-500'}`}>{currentUser.name ? currentUser.name.charAt(0).toUpperCase() : '@'}</div>
-            <div className="overflow-hidden"><div className="text-sm text-white font-medium truncate">{currentUser.name || 'User'}</div><div className="text-xs text-slate-500 capitalize">{currentUser.role}</div></div>
-          </div>
+          <div className="flex items-center gap-3 mb-4 px-3"><div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-white ${currentUser.role === 'admin' ? 'bg-blue-500' : 'bg-emerald-500'}`}>{currentUser.name ? currentUser.name.charAt(0).toUpperCase() : '@'}</div><div className="overflow-hidden"><div className="text-sm text-white font-medium truncate">{currentUser.name || 'User'}</div><div className="text-xs text-slate-500 capitalize">{currentUser.role}</div></div></div>
           <button onClick={logout} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-red-400 hover:bg-red-400/10 rounded-lg"><LogOut className="w-4 h-4" /> Sign Out</button>
         </div>
       </aside>
 
       <main className="flex-1 p-4 md:p-8 h-screen overflow-y-auto relative print:p-0 print:h-auto print:overflow-visible">
+        
+        {/* DASHBOARD */}
         {currentView === 'dashboard' && (
           <div className="max-w-6xl mx-auto space-y-6">
             <header className="mb-8"><h2 className="text-2xl font-bold text-slate-800">Welcome back, {currentUser.name.split(' ')[0]}</h2></header>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4"><div className="bg-blue-100 p-4 rounded-xl text-blue-600"><Package className="w-8 h-8" /></div><div><div className="text-slate-500 text-sm font-medium">Material Types</div><div className="text-3xl font-bold text-slate-800">{inventory.length}</div></div></div>
-              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4"><div className="bg-red-100 p-4 rounded-xl text-red-600"><AlertTriangle className="w-8 h-8" /></div><div><div className="text-slate-500 text-sm font-medium">Low Stock Alerts</div><div className="text-3xl font-bold text-red-600">{lowStockItems.length}</div></div></div>
+              
+              {/* NEW: Routes to Read-Only Report */}
+              <div 
+                onClick={() => { setCurrentView('stock-report'); setStockFilter('all'); }} 
+                className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4 cursor-pointer hover:ring-2 hover:ring-blue-500 hover:shadow-md transition-all group"
+              >
+                <div className="bg-blue-100 p-4 rounded-xl text-blue-600 group-hover:scale-110 transition-transform"><Package className="w-8 h-8" /></div>
+                <div><div className="text-slate-500 text-sm font-medium">Material Types</div><div className="text-3xl font-bold text-slate-800">{inventory.length}</div></div>
+              </div>
+
+              {/* NEW: Routes to Read-Only Report */}
+              <div 
+                onClick={() => { setCurrentView('stock-report'); setStockFilter('low'); }} 
+                className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4 cursor-pointer hover:ring-2 hover:ring-red-500 hover:shadow-md transition-all group"
+              >
+                <div className="bg-red-100 p-4 rounded-xl text-red-600 group-hover:scale-110 transition-transform"><AlertTriangle className="w-8 h-8" /></div>
+                <div><div className="text-slate-500 text-sm font-medium">Low Stock Alerts</div><div className="text-3xl font-bold text-red-600">{lowStockItems.length}</div></div>
+              </div>
+
             </div>
           </div>
         )}
 
+        {/* NEW: READ-ONLY STOCK REPORT VIEW */}
+        {currentView === 'stock-report' && (
+          <div className="max-w-6xl mx-auto flex flex-col h-full">
+            <header className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+                  {stockFilter === 'low' ? <><AlertTriangle className="w-6 h-6 text-red-600"/> Critical Restock Report</> : 'Complete Inventory Report'}
+                </h2>
+                <p className="text-slate-500 mt-1">Read-only view for review and printing.</p>
+              </div>
+              <div className="flex gap-3 print:hidden">
+                <button onClick={() => setCurrentView('dashboard')} className="flex items-center gap-2 px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-lg font-medium transition-colors"><ArrowLeft className="w-4 h-4"/> Back</button>
+                <button onClick={() => window.print()} className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"><Printer className="w-5 h-5" /> Print Report</button>
+              </div>
+            </header>
+
+            <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex-1">
+              <div className="overflow-x-auto overflow-y-auto max-h-[75vh]">
+                <table className="w-full text-left text-sm relative">
+                  <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 sticky top-0 z-10 shadow-sm">
+                    <tr>
+                      <th className="p-4 font-semibold">Material</th>
+                      <th className="p-4 hidden md:table-cell font-semibold">Barcode</th>
+                      <th className="p-4 font-semibold">Category</th>
+                      <th className="p-4 hidden sm:table-cell font-semibold text-right">Unit Price</th>
+                      <th className="p-4 text-center font-semibold">Status</th>
+                      <th className="p-4 text-center font-semibold">Current Quantity</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredInventory.map(item => (
+                      <tr key={item.id} className="hover:bg-slate-50">
+                        <td className="p-4 font-medium text-slate-800">{item.name}</td>
+                        <td className="p-4 text-slate-500 hidden md:table-cell font-mono text-xs">{item.barcode || '-'}</td>
+                        <td className="p-4 text-slate-500">{item.category}</td>
+                        <td className="p-4 text-slate-500 hidden sm:table-cell text-right">{item.pricePerUnit ? `₹${item.pricePerUnit.toFixed(2)}` : '₹0.00'}</td>
+                        <td className="p-4 text-center">{item.quantity <= item.minThreshold ? <span className="text-red-600 bg-red-100 px-2 py-1 rounded text-xs font-bold">LOW</span> : <span className="text-emerald-600 bg-emerald-100 px-2 py-1 rounded text-xs font-bold">OK</span>}</td>
+                        <td className="p-4 text-center font-bold text-slate-700">{item.quantity} <span className="text-xs font-normal text-slate-400 ml-1">{item.unit}</span></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* INVENTORY (MANAGEMENT VIEW) */}
         {currentView === 'inventory' && (
           <div className="max-w-6xl mx-auto flex flex-col h-full">
             <header className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -345,6 +363,7 @@ export default function App() {
                 {currentUser.role === 'admin' && <button onClick={() => { setIsAddModalOpen(true); setTempBarcode(''); }} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"><Plus className="w-5 h-5" /> Add</button>}
               </div>
             </header>
+
             <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex-1">
               <div className="overflow-x-auto overflow-y-auto max-h-[75vh]">
                 <table className="w-full text-left text-sm relative">
@@ -370,6 +389,7 @@ export default function App() {
           </div>
         )}
 
+        {/* ... Users, Reports, Logs, and Modals ... */}
         {currentView === 'users' && currentUser.role === 'admin' && (
           <div className="max-w-6xl mx-auto space-y-6">
             <header className="mb-6"><h2 className="text-2xl font-bold text-slate-800">User Management</h2></header>
@@ -472,6 +492,7 @@ export default function App() {
         )}
       </main>
 
+      {/* MODALS */}
       {isAddModalOpen && (
         <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50 print:hidden">
           <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl">
