@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Package, ShieldAlert, Users, Clock, LogOut, Plus, Trash2, Minus, AlertTriangle, CheckCircle2, Search, LayoutDashboard, ClipboardList, BarChart3, Download, Scan, Barcode, IndianRupee, Printer, UserPlus, ArrowLeft } from 'lucide-react';
+import { Package, Users, Clock, LogOut, Plus, Trash2, Minus, AlertTriangle, Search, LayoutDashboard, ClipboardList, BarChart3, Download, Scan, Barcode, IndianRupee, Printer, UserPlus, ArrowLeft, FileSpreadsheet, FileMinus, FileText } from 'lucide-react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth, signInWithEmailAndPassword, signOut as firebaseSignOut, onAuthStateChanged, createUserWithEmailAndPassword } from 'firebase/auth';
 import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc, addDoc, getDoc } from 'firebase/firestore';
@@ -35,13 +35,10 @@ export default function App() {
   const [logs, setLogs] = useState([]);
   const [systemUsers, setSystemUsers] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
-  
   const [stockFilter, setStockFilter] = useState('all'); 
-  
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [issueModal, setIssueModal] = useState({ isOpen: false, item: null });
   const [isLoading, setIsLoading] = useState(true);
-
   const [scannerMode, setScannerMode] = useState(null);
   const [tempBarcode, setTempBarcode] = useState('');
 
@@ -72,9 +69,7 @@ export default function App() {
             setAuthError('Access Denied: Your account has been removed by the Administrator.');
           }
         }
-      } else {
-        setCurrentUser(null);
-      }
+      } else { setCurrentUser(null); }
     });
     return () => unsubscribe();
   }, []);
@@ -84,8 +79,7 @@ export default function App() {
     const unsubInv = onSnapshot(getInventoryRef(), (snapshot) => {
       const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       items.sort((a, b) => a.name.localeCompare(b.name));
-      setInventory(items);
-      setIsLoading(false);
+      setInventory(items); setIsLoading(false);
     });
     const unsubLogs = onSnapshot(getLogsRef(), (snapshot) => {
       const logItems = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -107,8 +101,7 @@ export default function App() {
           scanner.clear();
           if (scannerMode === 'search') { setSearchTerm(decodedText); setScannerMode(null); } 
           else if (scannerMode === 'add') { setTempBarcode(decodedText); setScannerMode(null); }
-        },
-        (err) => {}
+        }, (err) => {}
       );
       return () => { scanner.clear().catch(e => console.error(e)); };
     }
@@ -141,7 +134,7 @@ export default function App() {
       try {
         await deleteDoc(doc(db, 'users', targetUserId));
         setUserCreationStatus({ type: 'success', msg: `Access permanently revoked for ${targetUserName}.` });
-        await logAction('Revoked User Access', targetUserName, 0, 0);
+        await logAction('Revoked User Access', targetUserName, 0, 0, {});
       } catch (error) { setUserCreationStatus({ type: 'error', msg: 'Failed to revoke access.' }); }
     }
   };
@@ -157,15 +150,16 @@ export default function App() {
     }
   };
 
-  const logAction = async (action, itemName, quantityChange, financialValue = 0) => {
-    await addDoc(getLogsRef(), { timestamp: new Date().toISOString(), user: currentUser.name, action, itemName, quantityChange, financialValue });
+  // Upgraded log function to hold deeper ledger records (Invoice & Issuance details)
+  const logAction = async (action, itemName, quantityChange, financialValue = 0, extraDetails = {}) => {
+    await addDoc(getLogsRef(), { timestamp: new Date().toISOString(), user: currentUser.name, action, itemName, quantityChange, financialValue, ...extraDetails });
   };
 
   const updateQuantity = async (id, change) => {
     const item = inventory.find(i => i.id === id); if (!item) return;
     const newQuantity = Math.max(0, item.quantity + change); if (newQuantity === item.quantity) return;
     await setDoc(doc(getInventoryRef(), id), { ...item, quantity: newQuantity });
-    await logAction(change > 0 ? 'Added' : 'Removed', item.name, Math.abs(change), Math.abs(change) * (item.pricePerUnit || 0));
+    await logAction(change > 0 ? 'Quick Add' : 'Quick Remove', item.name, Math.abs(change), Math.abs(change) * (item.pricePerUnit || 0), { category: item.category, unit: item.unit });
     if (change < 0) await checkAndSendAlert(item, newQuantity);
   };
 
@@ -173,40 +167,73 @@ export default function App() {
     e.preventDefault(); const formData = new FormData(e.target);
     const issueQty = parseInt(formData.get('issueQuantity')); const item = issueModal.item;
     const newQuantity = Math.max(0, item.quantity - issueQty); const issueValue = issueQty * (item.pricePerUnit || 0);
+    const extraDetails = { issuedTo: formData.get('issuedTo'), issueDate: formData.get('issueDate'), remarks: formData.get('issueRemarks') || '', category: item.category, unit: item.unit };
     try {
-      await setDoc(doc(getInventoryRef(), item.id), { ...item, quantity: newQuantity, lastIssueDate: formData.get('issueDate'), lastIssuedTo: formData.get('issuedTo') });
-      await logAction(`Issued to ${formData.get('issuedTo')}`, item.name, issueQty, issueValue);
+      await setDoc(doc(getInventoryRef(), item.id), { ...item, quantity: newQuantity, lastIssueDate: extraDetails.issueDate, lastIssuedTo: extraDetails.issuedTo });
+      await logAction(`Issue`, item.name, issueQty, issueValue, extraDetails);
       await checkAndSendAlert(item, newQuantity); setIssueModal({ isOpen: false, item: null });
     } catch (error) { console.error(error); }
   };
 
   const deleteItem = async (id) => {
     const item = inventory.find(i => i.id === id); if (!item) return;
-    await deleteDoc(doc(getInventoryRef(), id)); await logAction('Deleted Item', item.name, 0, 0);
+    await deleteDoc(doc(getInventoryRef(), id)); await logAction('Deleted Item', item.name, 0, 0, {});
   };
 
   const addItem = async (e) => {
     e.preventDefault(); const formData = new FormData(e.target);
+    const quantity = parseInt(formData.get('quantity'));
+    const totalCost = parseFloat(formData.get('totalCost')) || 0;
+    const pricePerUnit = quantity > 0 ? totalCost / quantity : 0;
+    const category = formData.get('category');
+    
+    // Additional data perfectly mapped to "Invoices" excel sheet
+    const extraDetails = {
+      invoiceNo: formData.get('invoiceNo') || '', vendor: formData.get('vendor') || '',
+      orderedBy: formData.get('orderedBy') || '', receivedBy: formData.get('receivedBy') || '',
+      remarks: formData.get('remarks') || '', purchaseDate: formData.get('purchaseDate'),
+      category: category, unit: formData.get('unit')
+    };
+
     const newItem = {
-      name: formData.get('name'), category: formData.get('category'), quantity: parseInt(formData.get('quantity')), unit: formData.get('unit'),
-      minThreshold: parseInt(formData.get('minThreshold')), pricePerUnit: parseFloat(formData.get('pricePerUnit')) || 0,
-      purchaseDate: formData.get('purchaseDate'), barcode: formData.get('barcode') || '', lastIssueDate: null, lastIssuedTo: 'Not yet issued'
+      name: formData.get('name'), category: category, quantity: quantity, unit: formData.get('unit'),
+      minThreshold: parseInt(formData.get('minThreshold')), pricePerUnit: pricePerUnit,
+      barcode: formData.get('barcode') || '', lastIssueDate: null, lastIssuedTo: 'Not yet issued', ...extraDetails
     };
     await addDoc(getInventoryRef(), newItem);
-    await logAction('Created New Item', newItem.name, newItem.quantity, newItem.quantity * newItem.pricePerUnit);
+    await logAction('Purchase', newItem.name, quantity, totalCost, extraDetails);
     setIsAddModalOpen(false); setTempBarcode('');
   };
 
-  const exportToCSV = () => {
-    const headers = ['Barcode', 'Material Name', 'Category', 'Current Quantity', 'Unit', 'Unit Price (INR)', 'Total Value (INR)', 'Status', 'Date of Purchase', 'Last Issued To', 'Last Issue Date'];
-    const rows = inventory.map(item => [ `"${item.barcode || 'N/A'}"`, `"${item.name}"`, `"${item.category}"`, item.quantity, `"${item.unit}"`, item.pricePerUnit || 0, (item.quantity * (item.pricePerUnit || 0)).toFixed(2), item.quantity <= item.minThreshold ? 'LOW STOCK' : 'OK', `"${item.purchaseDate || 'N/A'}"`, `"${item.lastIssuedTo || 'N/A'}"`, `"${item.lastIssueDate || 'N/A'}"` ]);
+  // Core Downloader Engine
+  const downloadCSV = (headers, rows, filename) => {
     const csvContent = "data:text/csv;charset=utf-8," + [headers.join(','), ...rows.map(e => e.join(','))].join("\n");
-    const link = document.createElement("a"); link.setAttribute("href", encodeURI(csvContent)); link.setAttribute("download", `Inventory_Financial_MIS_${new Date().toISOString().split('T')[0]}.csv`);
+    const link = document.createElement("a"); link.setAttribute("href", encodeURI(csvContent)); link.setAttribute("download", `${filename}_${new Date().toISOString().split('T')[0]}.csv`);
     document.body.appendChild(link); link.click(); document.body.removeChild(link);
   };
 
+  // Data Exporters matched to Excel Layout
+  const exportInventoryCSV = () => {
+    const headers = ['Barcode', 'Material Name', 'Category', 'Current Quantity', 'Unit', 'Price Per Unit (INR)', 'Total Value (INR)', 'Status', 'Date of Purchase', 'Last Issued To', 'Last Issue Date'];
+    const rows = inventory.map(item => [ `"${item.barcode || 'N/A'}"`, `"${item.name}"`, `"${item.category}"`, item.quantity, `"${item.unit}"`, item.pricePerUnit ? item.pricePerUnit.toFixed(2) : 0, (item.quantity * (item.pricePerUnit || 0)).toFixed(2), item.quantity <= item.minThreshold ? 'LOW STOCK' : 'OK', `"${item.purchaseDate || 'N/A'}"`, `"${item.lastIssuedTo || 'N/A'}"`, `"${item.lastIssueDate || 'N/A'}"` ]);
+    downloadCSV(headers, rows, 'Current_Inventory_Status');
+  };
+
+  const exportPurchasesCSV = () => {
+    const purchaseLogs = logs.filter(log => log.action === 'Purchase');
+    const headers = ['Purchased date', 'Invoice No.', 'Purchased From', 'Item Name', 'Category', 'Quantity Purchased', 'Total Cost (INR)', 'Ordered By', 'Received By', 'Remarks/Status'];
+    const rows = purchaseLogs.map(log => [ `"${log.purchaseDate || new Date(log.timestamp).toLocaleDateString()}"`, `"${log.invoiceNo || 'N/A'}"`, `"${log.vendor || 'N/A'}"`, `"${log.itemName}"`, `"${log.category || 'N/A'}"`, `"${log.quantityChange} ${log.unit || ''}"`, log.financialValue || 0, `"${log.orderedBy || 'N/A'}"`, `"${log.receivedBy || 'N/A'}"`, `"${log.remarks || 'N/A'}"` ]);
+    downloadCSV(headers, rows, 'Invoices_Ledger');
+  };
+
+  const exportIssuanceCSV = () => {
+    const issueLogs = logs.filter(log => log.action === 'Issue');
+    const headers = ['Date of Issue', 'Item Name', 'Category', 'Quantity Issued', 'Value (INR)', 'Issued To', 'Issued By (System User)', 'Remarks'];
+    const rows = issueLogs.map(log => [ `"${log.issueDate || new Date(log.timestamp).toLocaleDateString()}"`, `"${log.itemName}"`, `"${log.category || 'N/A'}"`, `"${log.quantityChange} ${log.unit || ''}"`, log.financialValue || 0, `"${log.issuedTo || 'N/A'}"`, `"${log.user}"`, `"${log.remarks || 'N/A'}"` ]);
+    downloadCSV(headers, rows, 'Stock_Out_Ledger');
+  };
+
   const lowStockItems = inventory.filter(item => item.quantity <= item.minThreshold);
-  
   const filteredInventory = inventory.filter(item => {
     const matchesSearch = item.name.toLowerCase().includes(searchTerm.toLowerCase()) || item.category.toLowerCase().includes(searchTerm.toLowerCase()) || (item.barcode && item.barcode.includes(searchTerm));
     const matchesStock = stockFilter === 'low' ? item.quantity <= item.minThreshold : true;
@@ -273,43 +300,29 @@ export default function App() {
       </aside>
 
       <main className="flex-1 p-4 md:p-8 h-screen overflow-y-auto relative print:p-0 print:h-auto print:overflow-visible">
-        
         {/* DASHBOARD */}
         {currentView === 'dashboard' && (
           <div className="max-w-6xl mx-auto space-y-6">
             <header className="mb-8"><h2 className="text-2xl font-bold text-slate-800">Welcome back, {currentUser.name.split(' ')[0]}</h2></header>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              
-              {/* NEW: Routes to Read-Only Report */}
-              <div 
-                onClick={() => { setCurrentView('stock-report'); setStockFilter('all'); }} 
-                className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4 cursor-pointer hover:ring-2 hover:ring-blue-500 hover:shadow-md transition-all group"
-              >
+              <div onClick={() => { setCurrentView('stock-report'); setStockFilter('all'); }} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4 cursor-pointer hover:ring-2 hover:ring-blue-500 hover:shadow-md transition-all group">
                 <div className="bg-blue-100 p-4 rounded-xl text-blue-600 group-hover:scale-110 transition-transform"><Package className="w-8 h-8" /></div>
                 <div><div className="text-slate-500 text-sm font-medium">Material Types</div><div className="text-3xl font-bold text-slate-800">{inventory.length}</div></div>
               </div>
-
-              {/* NEW: Routes to Read-Only Report */}
-              <div 
-                onClick={() => { setCurrentView('stock-report'); setStockFilter('low'); }} 
-                className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4 cursor-pointer hover:ring-2 hover:ring-red-500 hover:shadow-md transition-all group"
-              >
+              <div onClick={() => { setCurrentView('stock-report'); setStockFilter('low'); }} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4 cursor-pointer hover:ring-2 hover:ring-red-500 hover:shadow-md transition-all group">
                 <div className="bg-red-100 p-4 rounded-xl text-red-600 group-hover:scale-110 transition-transform"><AlertTriangle className="w-8 h-8" /></div>
                 <div><div className="text-slate-500 text-sm font-medium">Low Stock Alerts</div><div className="text-3xl font-bold text-red-600">{lowStockItems.length}</div></div>
               </div>
-
             </div>
           </div>
         )}
 
-        {/* NEW: READ-ONLY STOCK REPORT VIEW */}
+        {/* READ-ONLY REPORT VIEW */}
         {currentView === 'stock-report' && (
           <div className="max-w-6xl mx-auto flex flex-col h-full">
             <header className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
-                <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-                  {stockFilter === 'low' ? <><AlertTriangle className="w-6 h-6 text-red-600"/> Critical Restock Report</> : 'Complete Inventory Report'}
-                </h2>
+                <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">{stockFilter === 'low' ? <><AlertTriangle className="w-6 h-6 text-red-600"/> Critical Restock Report</> : 'Complete Inventory Report'}</h2>
                 <p className="text-slate-500 mt-1">Read-only view for review and printing.</p>
               </div>
               <div className="flex gap-3 print:hidden">
@@ -317,19 +330,11 @@ export default function App() {
                 <button onClick={() => window.print()} className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"><Printer className="w-5 h-5" /> Print Report</button>
               </div>
             </header>
-
             <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex-1">
               <div className="overflow-x-auto overflow-y-auto max-h-[75vh]">
                 <table className="w-full text-left text-sm relative">
                   <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 sticky top-0 z-10 shadow-sm">
-                    <tr>
-                      <th className="p-4 font-semibold">Material</th>
-                      <th className="p-4 hidden md:table-cell font-semibold">Barcode</th>
-                      <th className="p-4 font-semibold">Category</th>
-                      <th className="p-4 hidden sm:table-cell font-semibold text-right">Unit Price</th>
-                      <th className="p-4 text-center font-semibold">Status</th>
-                      <th className="p-4 text-center font-semibold">Current Quantity</th>
-                    </tr>
+                    <tr><th className="p-4 font-semibold">Material</th><th className="p-4 hidden md:table-cell font-semibold">Barcode</th><th className="p-4 font-semibold">Category</th><th className="p-4 hidden sm:table-cell font-semibold text-right">Unit Price</th><th className="p-4 text-center font-semibold">Status</th><th className="p-4 text-center font-semibold">Current Quantity</th></tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {filteredInventory.map(item => (
@@ -349,7 +354,7 @@ export default function App() {
           </div>
         )}
 
-        {/* INVENTORY (MANAGEMENT VIEW) */}
+        {/* INVENTORY */}
         {currentView === 'inventory' && (
           <div className="max-w-6xl mx-auto flex flex-col h-full">
             <header className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -360,10 +365,9 @@ export default function App() {
                   <input type="text" placeholder="Search name or barcode..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-10 pr-4 py-2 border border-slate-200 rounded-lg w-full" />
                 </div>
                 <button onClick={() => setScannerMode('search')} className="flex items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-lg"><Scan className="w-5 h-5" /> Scan</button>
-                {currentUser.role === 'admin' && <button onClick={() => { setIsAddModalOpen(true); setTempBarcode(''); }} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"><Plus className="w-5 h-5" /> Add</button>}
+                {currentUser.role === 'admin' && <button onClick={() => { setIsAddModalOpen(true); setTempBarcode(''); }} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"><Plus className="w-5 h-5" /> Add New Ledger Item</button>}
               </div>
             </header>
-
             <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex-1">
               <div className="overflow-x-auto overflow-y-auto max-h-[75vh]">
                 <table className="w-full text-left text-sm relative">
@@ -389,7 +393,7 @@ export default function App() {
           </div>
         )}
 
-        {/* ... Users, Reports, Logs, and Modals ... */}
+        {/* ... Users Component ... */}
         {currentView === 'users' && currentUser.role === 'admin' && (
           <div className="max-w-6xl mx-auto space-y-6">
             <header className="mb-6"><h2 className="text-2xl font-bold text-slate-800">User Management</h2></header>
@@ -399,16 +403,8 @@ export default function App() {
                 {userCreationStatus.msg && <div className={`p-3 mb-4 text-sm rounded-lg border font-medium ${userCreationStatus.type === 'success' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-red-50 text-red-700 border-red-200'}`}>{userCreationStatus.msg}</div>}
                 <form onSubmit={handleAdminCreateUser} className="space-y-4">
                   <div><label className="block text-xs font-medium text-slate-500 mb-1">Full Name</label><input required type="text" value={newUserName} onChange={e => setNewUserName(e.target.value)} className="w-full border border-slate-300 p-2.5 rounded-lg text-sm outline-none" /></div>
-                  <div className="flex gap-3">
-                    <div className="flex-1"><label className="block text-xs font-medium text-slate-500 mb-1">Age</label><input required type="number" value={newUserAge} onChange={e => setNewUserAge(e.target.value)} className="w-full border border-slate-300 p-2.5 rounded-lg text-sm outline-none" /></div>
-                    <div className="flex-1"><label className="block text-xs font-medium text-slate-500 mb-1">Gender</label><select required value={newUserGender} onChange={e => setNewUserGender(e.target.value)} className="w-full border border-slate-300 p-2.5 rounded-lg text-sm outline-none"><option value="" disabled>Select...</option><option value="Male">Male</option><option value="Female">Female</option><option value="Other">Other</option></select></div>
-                  </div>
-                  <div><label className="block text-xs font-medium text-slate-500 mb-1">Role Settings</label>
-                    <select required value={newUserRole} onChange={e => setNewUserRole(e.target.value)} className="w-full border border-slate-300 p-2.5 rounded-lg text-sm outline-none font-medium">
-                      <option value="staff">Staff (Standard Access)</option>
-                      <option value="admin">Administrator (Full Access)</option>
-                    </select>
-                  </div>
+                  <div className="flex gap-3"><div className="flex-1"><label className="block text-xs font-medium text-slate-500 mb-1">Age</label><input required type="number" value={newUserAge} onChange={e => setNewUserAge(e.target.value)} className="w-full border border-slate-300 p-2.5 rounded-lg text-sm outline-none" /></div><div className="flex-1"><label className="block text-xs font-medium text-slate-500 mb-1">Gender</label><select required value={newUserGender} onChange={e => setNewUserGender(e.target.value)} className="w-full border border-slate-300 p-2.5 rounded-lg text-sm outline-none"><option value="" disabled>Select...</option><option value="Male">Male</option><option value="Female">Female</option><option value="Other">Other</option></select></div></div>
+                  <div><label className="block text-xs font-medium text-slate-500 mb-1">Role Settings</label><select required value={newUserRole} onChange={e => setNewUserRole(e.target.value)} className="w-full border border-slate-300 p-2.5 rounded-lg text-sm outline-none font-medium"><option value="staff">Staff (Standard Access)</option><option value="admin">Administrator (Full Access)</option></select></div>
                   <hr className="border-slate-100 my-2" />
                   <div><label className="block text-xs font-medium text-slate-500 mb-1">Login Email</label><input required type="email" value={newUserEmail} onChange={e => setNewUserEmail(e.target.value)} className="w-full border border-slate-300 p-2.5 rounded-lg text-sm outline-none" /></div>
                   <div><label className="block text-xs font-medium text-slate-500 mb-1">Temporary Password</label><input required type="text" value={newUserPassword} onChange={e => setNewUserPassword(e.target.value)} minLength="6" className="w-full border border-slate-300 p-2.5 rounded-lg text-sm outline-none" /></div>
@@ -419,21 +415,10 @@ export default function App() {
                 <div className="p-6 border-b border-slate-200"><h3 className="text-lg font-bold text-slate-800 flex items-center gap-2"><Users className="w-5 h-5 text-emerald-600" /> Active System Personnel</h3></div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-sm">
-                    <thead className="bg-slate-50 border-b border-slate-200 text-slate-600">
-                      <tr><th className="p-4 font-semibold">Name</th><th className="p-4 font-semibold">Email</th><th className="p-4 font-semibold">Role</th><th className="p-4 font-semibold text-right">Action</th></tr>
-                    </thead>
+                    <thead className="bg-slate-50 border-b border-slate-200 text-slate-600"><tr><th className="p-4 font-semibold">Name</th><th className="p-4 font-semibold">Email</th><th className="p-4 font-semibold">Role</th><th className="p-4 font-semibold text-right">Action</th></tr></thead>
                     <tbody className="divide-y divide-slate-100">
                       {systemUsers.map(user => (
-                        <tr key={user.id} className="hover:bg-slate-50">
-                          <td className="p-4 font-medium text-slate-800">{user.name}</td>
-                          <td className="p-4 text-slate-500">{user.email}</td>
-                          <td className="p-4"><span className={`px-2 py-1 rounded text-xs font-bold uppercase ${user.role === 'admin' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'}`}>{user.role}</span></td>
-                          <td className="p-4 text-right">
-                            {user.email !== ADMIN_EMAIL && user.id !== currentUser.uid && (
-                              <button onClick={() => deleteSystemUser(user.id, user.name)} className="text-red-500 p-2 hover:bg-red-50 rounded transition-colors" title="Revoke Access"><Trash2 className="w-4 h-4" /></button>
-                            )}
-                          </td>
-                        </tr>
+                        <tr key={user.id} className="hover:bg-slate-50"><td className="p-4 font-medium text-slate-800">{user.name}</td><td className="p-4 text-slate-500">{user.email}</td><td className="p-4"><span className={`px-2 py-1 rounded text-xs font-bold uppercase ${user.role === 'admin' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'}`}>{user.role}</span></td><td className="p-4 text-right">{user.email !== ADMIN_EMAIL && user.id !== currentUser.uid && (<button onClick={() => deleteSystemUser(user.id, user.name)} className="text-red-500 p-2 hover:bg-red-50 rounded transition-colors" title="Revoke Access"><Trash2 className="w-4 h-4" /></button>)}</td></tr>
                       ))}
                     </tbody>
                   </table>
@@ -443,13 +428,16 @@ export default function App() {
           </div>
         )}
 
+        {/* REPORTS - Updated to map offline Excel functionality */}
         {currentView === 'reports' && currentUser.role === 'admin' && (
           <div className="max-w-6xl mx-auto space-y-6">
-            <header className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <header className="mb-6 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
               <div><h2 className="text-2xl font-bold text-slate-800">Management Information Systems</h2></div>
-              <div className="flex gap-3 print:hidden">
-                <button onClick={exportToCSV} className="flex items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-lg transition-colors"><Download className="w-4 h-4" /> CSV Data</button>
-                <button onClick={() => window.print()} className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"><Printer className="w-5 h-5" /> Export Executive PDF</button>
+              <div className="flex flex-wrap gap-3 print:hidden">
+                <button onClick={() => exportInventoryCSV()} className="flex items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-lg text-sm transition-colors"><FileText className="w-4 h-4" /> Current Stock</button>
+                <button onClick={() => exportPurchasesCSV()} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm transition-colors"><FileSpreadsheet className="w-4 h-4" /> Invoices Ledger</button>
+                <button onClick={() => exportIssuanceCSV()} className="flex items-center gap-2 bg-orange-600 hover:bg-orange-700 text-white px-4 py-2 rounded-lg text-sm transition-colors"><FileMinus className="w-4 h-4" /> Stock Out Ledger</button>
+                <button onClick={() => window.print()} className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"><Printer className="w-4 h-4" /> PDF Report</button>
               </div>
             </header>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 print:grid-cols-2 print:gap-4">
@@ -492,37 +480,65 @@ export default function App() {
         )}
       </main>
 
-      {/* MODALS */}
+      {/* ENHANCED PURCHASE FORM MODAL */}
       {isAddModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50 print:hidden">
-          <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl">
-            <h3 className="text-lg font-bold mb-4">Add Material</h3>
+        <div className="fixed inset-0 bg-slate-900/60 flex items-center justify-center p-4 z-50 print:hidden overflow-y-auto">
+          <div className="bg-white rounded-2xl w-full max-w-2xl p-6 shadow-xl my-8">
+            <h3 className="text-xl font-bold mb-4 text-slate-800">Register New Material & Purchase</h3>
             <form onSubmit={addItem} className="space-y-4">
-              <div className="flex gap-2"><div className="relative flex-1"><Barcode className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" /><input name="barcode" type="text" placeholder="Barcode (Optional)" value={tempBarcode} onChange={(e) => setTempBarcode(e.target.value)} className="w-full pl-10 pr-3 py-2 border border-slate-300 rounded-lg font-mono text-sm" /></div><button type="button" onClick={() => setScannerMode('add')} className="px-4 bg-slate-800 text-white rounded-lg flex items-center gap-2 hover:bg-slate-900"><Scan className="w-4 h-4"/> Scan</button></div>
-              <input required name="name" type="text" placeholder="Material Name" className="w-full border border-slate-300 p-2 rounded-lg" />
-              <input required name="category" type="text" placeholder="Category" className="w-full border border-slate-300 p-2 rounded-lg" />
-              <div className="grid grid-cols-2 gap-4">
-                <div><label className="block text-xs font-medium text-slate-500 mb-1">Quantity</label><input required name="quantity" type="number" min="0" placeholder="0" className="w-full border border-slate-300 p-2 rounded-lg" /></div>
-                <div><label className="block text-xs font-medium text-slate-500 mb-1">Low Alert At</label><input required name="minThreshold" type="number" min="0" placeholder="0" className="w-full border border-slate-300 p-2 rounded-lg" /></div>
-                <div><label className="block text-xs font-medium text-slate-500 mb-1">Unit Type</label><input required name="unit" type="text" placeholder="e.g. Liters, Box" className="w-full border border-slate-300 p-2 rounded-lg" /></div>
-                <div><label className="block text-xs font-medium text-slate-500 mb-1">Price Per Unit (₹)</label><input required name="pricePerUnit" type="number" step="0.01" min="0" placeholder="0.00" className="w-full border border-slate-300 p-2 rounded-lg" /></div>
+              
+              {/* Item Details */}
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-4">
+                <h4 className="text-sm font-bold text-slate-600 uppercase tracking-wider">Item Details</h4>
+                <div className="flex gap-2"><div className="relative flex-1"><Barcode className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" /><input name="barcode" type="text" placeholder="Barcode (Optional)" value={tempBarcode} onChange={(e) => setTempBarcode(e.target.value)} className="w-full pl-10 pr-3 py-2 border border-slate-300 rounded-lg font-mono text-sm" /></div><button type="button" onClick={() => setScannerMode('add')} className="px-4 bg-slate-800 text-white rounded-lg flex items-center gap-2 hover:bg-slate-900"><Scan className="w-4 h-4"/> Scan</button></div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <input required name="name" type="text" placeholder="Material Name" className="w-full border border-slate-300 p-2 rounded-lg" />
+                  <input required name="category" type="text" placeholder="Category" className="w-full border border-slate-300 p-2 rounded-lg" />
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                  <div><label className="block text-xs font-medium text-slate-500 mb-1">Quantity</label><input required name="quantity" type="number" min="0" placeholder="0" className="w-full border border-slate-300 p-2 rounded-lg" /></div>
+                  <div><label className="block text-xs font-medium text-slate-500 mb-1">Unit Type</label><input required name="unit" type="text" placeholder="e.g. Ltr, Pkt" className="w-full border border-slate-300 p-2 rounded-lg" /></div>
+                  <div><label className="block text-xs font-medium text-slate-500 mb-1">Low Alert At</label><input required name="minThreshold" type="number" min="0" placeholder="0" className="w-full border border-slate-300 p-2 rounded-lg" /></div>
+                  <div><label className="block text-xs font-medium text-slate-500 mb-1">Total Cost (₹)</label><input required name="totalCost" type="number" step="0.01" min="0" placeholder="0.00" className="w-full border border-slate-300 p-2 rounded-lg" /></div>
+                </div>
               </div>
-              <div><label className="block text-xs font-medium text-slate-500 mb-1">Date of Purchase</label><input required name="purchaseDate" type="date" defaultValue={new Date().toISOString().split('T')[0]} className="w-full border border-slate-300 p-2 rounded-lg" /></div>
-              <div className="flex gap-2 pt-2"><button type="button" onClick={() => setIsAddModalOpen(false)} className="flex-1 p-2 border border-slate-300 rounded-lg hover:bg-slate-50">Cancel</button><button type="submit" className="flex-1 p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Save Asset</button></div>
+
+              {/* Invoice Details */}
+              <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 space-y-4">
+                <h4 className="text-sm font-bold text-blue-700 uppercase tracking-wider">Invoice & Logistics</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div><label className="block text-xs font-medium text-slate-500 mb-1">Invoice No.</label><input name="invoiceNo" type="text" placeholder="e.g. INV-1234" className="w-full border border-slate-300 p-2 rounded-lg bg-white" /></div>
+                  <div><label className="block text-xs font-medium text-slate-500 mb-1">Purchased From (Vendor)</label><input name="vendor" type="text" placeholder="Vendor Name" className="w-full border border-slate-300 p-2 rounded-lg bg-white" /></div>
+                  <div><label className="block text-xs font-medium text-slate-500 mb-1">Ordered By</label><input name="orderedBy" type="text" placeholder="Staff Name" className="w-full border border-slate-300 p-2 rounded-lg bg-white" /></div>
+                  <div><label className="block text-xs font-medium text-slate-500 mb-1">Received By</label><input name="receivedBy" type="text" placeholder="Staff Name" className="w-full border border-slate-300 p-2 rounded-lg bg-white" /></div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div><label className="block text-xs font-medium text-slate-500 mb-1">Date of Purchase</label><input required name="purchaseDate" type="date" defaultValue={new Date().toISOString().split('T')[0]} className="w-full border border-slate-300 p-2 rounded-lg bg-white" /></div>
+                  <div><label className="block text-xs font-medium text-slate-500 mb-1">Remarks / Status</label><input name="remarks" type="text" placeholder="Optional notes" className="w-full border border-slate-300 p-2 rounded-lg bg-white" /></div>
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-2"><button type="button" onClick={() => setIsAddModalOpen(false)} className="flex-1 p-2 border border-slate-300 rounded-lg hover:bg-slate-50 font-medium">Cancel</button><button type="submit" className="flex-1 p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium shadow-md shadow-blue-600/20">Register & Add to Stock</button></div>
             </form>
           </div>
         </div>
       )}
 
+      {/* ENHANCED ISSUANCE MODAL */}
       {issueModal.isOpen && (
-        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50 print:hidden">
+        <div className="fixed inset-0 bg-slate-900/60 flex items-center justify-center p-4 z-50 print:hidden">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
-            <h3 className="text-lg font-bold mb-4">Issue {issueModal.item?.name}</h3>
+            <h3 className="text-xl font-bold mb-4 text-slate-800">Issue Material</h3>
+            <div className="mb-4 p-3 bg-slate-50 rounded-lg border border-slate-200">
+              <p className="font-semibold text-slate-800">{issueModal.item?.name}</p>
+              <p className="text-sm text-slate-500">Current Stock: <span className="font-bold text-blue-600">{issueModal.item?.quantity} {issueModal.item?.unit}</span></p>
+            </div>
             <form onSubmit={handleIssue} className="space-y-4">
               <div><label className="block text-sm font-medium text-slate-700 mb-1">Quantity to Issue</label><input required name="issueQuantity" type="number" min="1" max={issueModal.item?.quantity} defaultValue="1" className="w-full border border-slate-300 rounded-lg px-3 py-2" /></div>
               <div><label className="block text-sm font-medium text-slate-700 mb-1">Issued To (Name)</label><input required name="issuedTo" type="text" placeholder="e.g. John Doe" className="w-full border border-slate-300 rounded-lg px-3 py-2" /></div>
               <div><label className="block text-sm font-medium text-slate-700 mb-1">Date of Issue</label><input required name="issueDate" type="date" defaultValue={new Date().toISOString().split('T')[0]} className="w-full border border-slate-300 rounded-lg px-3 py-2" /></div>
-              <div className="pt-2 flex gap-3"><button type="button" onClick={() => setIssueModal({ isOpen: false, item: null })} className="flex-1 px-4 py-2 border rounded-lg hover:bg-slate-50">Cancel</button><button type="submit" className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Confirm Issue</button></div>
+              <div><label className="block text-sm font-medium text-slate-700 mb-1">Remarks (Optional)</label><input name="issueRemarks" type="text" placeholder="e.g. Department or reason" className="w-full border border-slate-300 rounded-lg px-3 py-2" /></div>
+              <div className="pt-2 flex gap-3"><button type="button" onClick={() => setIssueModal({ isOpen: false, item: null })} className="flex-1 px-4 py-2 border rounded-lg hover:bg-slate-50 font-medium">Cancel</button><button type="submit" className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium shadow-md shadow-blue-600/20">Confirm Issue</button></div>
             </form>
           </div>
         </div>
