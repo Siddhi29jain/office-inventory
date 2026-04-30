@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Package, Users, Clock, LogOut, Plus, Trash2, Minus, AlertTriangle, Search, LayoutDashboard, ClipboardList, BarChart3, Download, Scan, Barcode, IndianRupee, Printer, UserPlus, ArrowLeft, FileSpreadsheet, FileMinus, FileText } from 'lucide-react';
+import { Package, Users, Clock, LogOut, Plus, Trash2, Minus, AlertTriangle, Search, LayoutDashboard, ClipboardList, BarChart3, Download, Scan, Barcode, IndianRupee, Printer, UserPlus, ArrowLeft, FileSpreadsheet, FileMinus, FileText, Edit } from 'lucide-react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth, signInWithEmailAndPassword, signOut as firebaseSignOut, onAuthStateChanged, createUserWithEmailAndPassword } from 'firebase/auth';
 import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc, addDoc, getDoc } from 'firebase/firestore';
@@ -36,8 +36,14 @@ export default function App() {
   const [systemUsers, setSystemUsers] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [stockFilter, setStockFilter] = useState('all'); 
+  
+  // Modals
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [issueModal, setIssueModal] = useState({ isOpen: false, item: null });
+  const [editModal, setEditModal] = useState({ isOpen: false, item: null });
+  // NEW: Custom React Deletion Modal State (Bypasses Browser Popup Blockers)
+  const [deleteConfirm, setDeleteConfirm] = useState({ isOpen: false, type: '', id: null, name: '' });
+  
   const [isLoading, setIsLoading] = useState(true);
   const [scannerMode, setScannerMode] = useState(null);
   const [tempBarcode, setTempBarcode] = useState('');
@@ -100,7 +106,7 @@ export default function App() {
         (decodedText) => {
           scanner.clear();
           if (scannerMode === 'search') { setSearchTerm(decodedText); setScannerMode(null); } 
-          else if (scannerMode === 'add') { setTempBarcode(decodedText); setScannerMode(null); }
+          else if (scannerMode === 'add' || scannerMode === 'edit') { setTempBarcode(decodedText); setScannerMode(null); }
         }, (err) => {}
       );
       return () => { scanner.clear().catch(e => console.error(e)); };
@@ -128,20 +134,8 @@ export default function App() {
     } catch (err) { setUserCreationStatus({ type: 'error', msg: err.message.replace('Firebase: ', '') }); }
   };
 
-  const deleteSystemUser = async (targetUserId, targetUserName) => {
-    if (targetUserId === currentUser.uid) { alert("Security Lock: You cannot delete your own active session."); return; }
-    if (window.confirm(`Are you sure you want to permanently revoke access for ${targetUserName}?`)) {
-      try {
-        await deleteDoc(doc(db, 'users', targetUserId));
-        setUserCreationStatus({ type: 'success', msg: `Access permanently revoked for ${targetUserName}.` });
-        await logAction('Revoked User Access', targetUserName, 0, 0, {});
-      } catch (error) { setUserCreationStatus({ type: 'error', msg: 'Failed to revoke access.' }); }
-    }
-  };
-
   const logout = () => firebaseSignOut(auth);
 
-  // 3. PASTE YOUR EMAILJS KEYS HERE
   const checkAndSendAlert = async (item, newQuantity) => {
     if (newQuantity <= item.minThreshold && item.quantity > item.minThreshold) {
       try {
@@ -150,7 +144,6 @@ export default function App() {
     }
   };
 
-  // Upgraded log function to hold deeper ledger records (Invoice & Issuance details)
   const logAction = async (action, itemName, quantityChange, financialValue = 0, extraDetails = {}) => {
     await addDoc(getLogsRef(), { timestamp: new Date().toISOString(), user: currentUser.name, action, itemName, quantityChange, financialValue, ...extraDetails });
   };
@@ -164,7 +157,8 @@ export default function App() {
   };
 
   const handleIssue = async (e) => {
-    e.preventDefault(); const formData = new FormData(e.target);
+    e.preventDefault(); 
+    const formData = new FormData(e.target);
     const issueQty = parseInt(formData.get('issueQuantity')); const item = issueModal.item;
     const newQuantity = Math.max(0, item.quantity - issueQty); const issueValue = issueQty * (item.pricePerUnit || 0);
     const extraDetails = { issuedTo: formData.get('issuedTo'), issueDate: formData.get('issueDate'), remarks: formData.get('issueRemarks') || '', category: item.category, unit: item.unit };
@@ -175,29 +169,33 @@ export default function App() {
     } catch (error) { console.error(error); }
   };
 
-  const deleteItem = async (id) => {
-    const item = inventory.find(i => i.id === id); if (!item) return;
-    await deleteDoc(doc(getInventoryRef(), id)); await logAction('Deleted Item', item.name, 0, 0, {});
+  const handleEdit = async (e) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    const updatedItem = {
+      ...editModal.item,
+      name: formData.get('name'), category: formData.get('category'), quantity: parseInt(formData.get('quantity')), unit: formData.get('unit'),
+      minThreshold: parseInt(formData.get('minThreshold')), pricePerUnit: parseFloat(formData.get('pricePerUnit')) || 0, barcode: formData.get('barcode') || editModal.item.barcode || '',
+    };
+    try {
+      await setDoc(doc(getInventoryRef(), editModal.item.id), updatedItem);
+      await logAction('Corrected Ledger Item', updatedItem.name, 0, 0, { category: updatedItem.category });
+      setEditModal({ isOpen: false, item: null });
+    } catch (error) { console.error(error); }
   };
 
   const addItem = async (e) => {
-    e.preventDefault(); const formData = new FormData(e.target);
-    const quantity = parseInt(formData.get('quantity'));
-    const totalCost = parseFloat(formData.get('totalCost')) || 0;
-    const pricePerUnit = quantity > 0 ? totalCost / quantity : 0;
-    const category = formData.get('category');
-    
-    // Additional data perfectly mapped to "Invoices" excel sheet
+    e.preventDefault(); 
+    const formData = new FormData(e.target);
+    const quantity = parseInt(formData.get('quantity')); const totalCost = parseFloat(formData.get('totalCost')) || 0;
+    const pricePerUnit = quantity > 0 ? totalCost / quantity : 0; const category = formData.get('category');
     const extraDetails = {
       invoiceNo: formData.get('invoiceNo') || '', vendor: formData.get('vendor') || '',
       orderedBy: formData.get('orderedBy') || '', receivedBy: formData.get('receivedBy') || '',
-      remarks: formData.get('remarks') || '', purchaseDate: formData.get('purchaseDate'),
-      category: category, unit: formData.get('unit')
+      remarks: formData.get('remarks') || '', purchaseDate: formData.get('purchaseDate'), category: category, unit: formData.get('unit')
     };
-
     const newItem = {
-      name: formData.get('name'), category: category, quantity: quantity, unit: formData.get('unit'),
-      minThreshold: parseInt(formData.get('minThreshold')), pricePerUnit: pricePerUnit,
+      name: formData.get('name'), category: category, quantity: quantity, unit: formData.get('unit'), minThreshold: parseInt(formData.get('minThreshold')), pricePerUnit: pricePerUnit,
       barcode: formData.get('barcode') || '', lastIssueDate: null, lastIssuedTo: 'Not yet issued', ...extraDetails
     };
     await addDoc(getInventoryRef(), newItem);
@@ -205,14 +203,39 @@ export default function App() {
     setIsAddModalOpen(false); setTempBarcode('');
   };
 
-  // Core Downloader Engine
+  // NEW: Secure React Deletion Request Handlers
+  const requestItemDelete = (id) => {
+    const item = inventory.find(i => i.id === id);
+    if (item) setDeleteConfirm({ isOpen: true, type: 'item', id: id, name: item.name });
+  };
+
+  const requestUserDelete = (id, name) => {
+    if (id === currentUser.uid) { alert("Security Lock: You cannot delete your own active session."); return; }
+    setDeleteConfirm({ isOpen: true, type: 'user', id: id, name: name });
+  };
+
+  // NEW: Executes the deletion only after Custom Modal confirms
+  const executeDelete = async () => {
+    const { type, id, name } = deleteConfirm;
+    try {
+      if (type === 'item') {
+        await deleteDoc(doc(getInventoryRef(), id));
+        await logAction('Deleted Item', name, 0, 0, {});
+      } else if (type === 'user') {
+        await deleteDoc(doc(getUsersRef(), id));
+        setUserCreationStatus({ type: 'success', msg: `Access permanently revoked for ${name}.` });
+        await logAction('Revoked User Access', name, 0, 0, {});
+      }
+    } catch (error) { console.error("Delete failed:", error); }
+    setDeleteConfirm({ isOpen: false, type: '', id: null, name: '' });
+  };
+
   const downloadCSV = (headers, rows, filename) => {
     const csvContent = "data:text/csv;charset=utf-8," + [headers.join(','), ...rows.map(e => e.join(','))].join("\n");
     const link = document.createElement("a"); link.setAttribute("href", encodeURI(csvContent)); link.setAttribute("download", `${filename}_${new Date().toISOString().split('T')[0]}.csv`);
     document.body.appendChild(link); link.click(); document.body.removeChild(link);
   };
 
-  // Data Exporters matched to Excel Layout
   const exportInventoryCSV = () => {
     const headers = ['Barcode', 'Material Name', 'Category', 'Current Quantity', 'Unit', 'Price Per Unit (INR)', 'Total Value (INR)', 'Status', 'Date of Purchase', 'Last Issued To', 'Last Issue Date'];
     const rows = inventory.map(item => [ `"${item.barcode || 'N/A'}"`, `"${item.name}"`, `"${item.category}"`, item.quantity, `"${item.unit}"`, item.pricePerUnit ? item.pricePerUnit.toFixed(2) : 0, (item.quantity * (item.pricePerUnit || 0)).toFixed(2), item.quantity <= item.minThreshold ? 'LOW STOCK' : 'OK', `"${item.purchaseDate || 'N/A'}"`, `"${item.lastIssuedTo || 'N/A'}"`, `"${item.lastIssueDate || 'N/A'}"` ]);
@@ -267,7 +290,6 @@ export default function App() {
                 <div><label className="block text-sm font-medium text-slate-700 mb-1">Password</label><input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full border border-slate-300 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all" required minLength="6" /></div>
                 <button type="submit" className="w-full bg-blue-600 text-white font-semibold py-3.5 rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-600/30 active:scale-[0.98]">Secure Login</button>
               </form>
-              <p className="text-center mt-6 text-sm text-slate-500">Contact your System Administrator if you need an account.</p>
             </div>
           </div>
         </div>
@@ -382,8 +404,15 @@ export default function App() {
                         <td className="p-4 text-slate-500 hidden sm:table-cell text-right">{item.pricePerUnit ? `₹${item.pricePerUnit.toFixed(2)}` : '₹0.00'}</td>
                         <td className="p-4 text-center">{item.quantity <= item.minThreshold ? <span className="text-red-600 bg-red-100 px-2 py-1 rounded text-xs font-bold">LOW</span> : <span className="text-emerald-600 bg-emerald-100 px-2 py-1 rounded text-xs font-bold">OK</span>}</td>
                         <td className="p-4 text-center font-bold text-slate-700">{item.quantity}</td>
-                        <td className="p-4 text-center"><div className="inline-flex bg-slate-100 rounded-lg p-1 border border-slate-200"><button onClick={() => setIssueModal({ isOpen: true, item })} className="p-1 hover:bg-white rounded"><Minus className="w-4 h-4" /></button><span className="w-8 text-center font-semibold text-slate-700">1</span><button onClick={() => updateQuantity(item.id, 1)} disabled={currentUser.role !== 'admin'} className={`p-1 rounded ${currentUser.role === 'admin' ? 'hover:bg-white text-slate-700' : 'opacity-30 text-slate-400'}`}><Plus className="w-4 h-4" /></button></div></td>
-                        {currentUser.role === 'admin' && <td className="p-4 text-right"><button onClick={() => deleteItem(item.id)} className="text-red-500 p-2 hover:bg-red-50 rounded"><Trash2 className="w-5 h-5" /></button></td>}
+                        <td className="p-4 text-center"><div className="inline-flex bg-slate-100 rounded-lg p-1 border border-slate-200"><button onClick={() => updateQuantity(item.id, -1)} disabled={currentUser.role !== 'admin'} className={`p-1 rounded ${currentUser.role === 'admin' ? 'hover:bg-white text-slate-700' : 'opacity-30 text-slate-400'}`}><Minus className="w-4 h-4" /></button><span className="w-8 text-center font-semibold text-slate-700">1</span><button onClick={() => updateQuantity(item.id, 1)} disabled={currentUser.role !== 'admin'} className={`p-1 rounded ${currentUser.role === 'admin' ? 'hover:bg-white text-slate-700' : 'opacity-30 text-slate-400'}`}><Plus className="w-4 h-4" /></button></div></td>
+                        {currentUser.role === 'admin' && (
+                          <td className="p-4 text-right">
+                            <button onClick={() => setIssueModal({ isOpen: true, item })} className="text-orange-500 p-2 hover:bg-orange-50 rounded mr-1" title="Issue Material"><FileMinus className="w-5 h-5" /></button>
+                            <button onClick={() => setEditModal({ isOpen: true, item })} className="text-blue-500 p-2 hover:bg-blue-50 rounded mr-1" title="Correct / Edit"><Edit className="w-5 h-5" /></button>
+                            {/* NEW: Triggers custom React Modal instead of native window.confirm */}
+                            <button onClick={() => requestItemDelete(item.id)} className="text-red-500 p-2 hover:bg-red-50 rounded" title="Delete Material"><Trash2 className="w-5 h-5" /></button>
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>
@@ -393,7 +422,7 @@ export default function App() {
           </div>
         )}
 
-        {/* ... Users Component ... */}
+        {/* USERS */}
         {currentView === 'users' && currentUser.role === 'admin' && (
           <div className="max-w-6xl mx-auto space-y-6">
             <header className="mb-6"><h2 className="text-2xl font-bold text-slate-800">User Management</h2></header>
@@ -418,7 +447,7 @@ export default function App() {
                     <thead className="bg-slate-50 border-b border-slate-200 text-slate-600"><tr><th className="p-4 font-semibold">Name</th><th className="p-4 font-semibold">Email</th><th className="p-4 font-semibold">Role</th><th className="p-4 font-semibold text-right">Action</th></tr></thead>
                     <tbody className="divide-y divide-slate-100">
                       {systemUsers.map(user => (
-                        <tr key={user.id} className="hover:bg-slate-50"><td className="p-4 font-medium text-slate-800">{user.name}</td><td className="p-4 text-slate-500">{user.email}</td><td className="p-4"><span className={`px-2 py-1 rounded text-xs font-bold uppercase ${user.role === 'admin' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'}`}>{user.role}</span></td><td className="p-4 text-right">{user.email !== ADMIN_EMAIL && user.id !== currentUser.uid && (<button onClick={() => deleteSystemUser(user.id, user.name)} className="text-red-500 p-2 hover:bg-red-50 rounded transition-colors" title="Revoke Access"><Trash2 className="w-4 h-4" /></button>)}</td></tr>
+                        <tr key={user.id} className="hover:bg-slate-50"><td className="p-4 font-medium text-slate-800">{user.name}</td><td className="p-4 text-slate-500">{user.email}</td><td className="p-4"><span className={`px-2 py-1 rounded text-xs font-bold uppercase ${user.role === 'admin' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'}`}>{user.role}</span></td><td className="p-4 text-right">{user.email !== ADMIN_EMAIL && user.id !== currentUser.uid && (<button onClick={() => requestUserDelete(user.id, user.name)} className="text-red-500 p-2 hover:bg-red-50 rounded transition-colors" title="Revoke Access"><Trash2 className="w-4 h-4" /></button>)}</td></tr>
                       ))}
                     </tbody>
                   </table>
@@ -428,7 +457,7 @@ export default function App() {
           </div>
         )}
 
-        {/* REPORTS - Updated to map offline Excel functionality */}
+        {/* REPORTS */}
         {currentView === 'reports' && currentUser.role === 'admin' && (
           <div className="max-w-6xl mx-auto space-y-6">
             <header className="mb-6 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -480,14 +509,14 @@ export default function App() {
         )}
       </main>
 
-      {/* ENHANCED PURCHASE FORM MODAL */}
+      {/* --- ALL MODALS --- */}
+      
+      {/* PURCHASE MODAL */}
       {isAddModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 flex items-center justify-center p-4 z-50 print:hidden overflow-y-auto">
           <div className="bg-white rounded-2xl w-full max-w-2xl p-6 shadow-xl my-8">
             <h3 className="text-xl font-bold mb-4 text-slate-800">Register New Material & Purchase</h3>
             <form onSubmit={addItem} className="space-y-4">
-              
-              {/* Item Details */}
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-4">
                 <h4 className="text-sm font-bold text-slate-600 uppercase tracking-wider">Item Details</h4>
                 <div className="flex gap-2"><div className="relative flex-1"><Barcode className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" /><input name="barcode" type="text" placeholder="Barcode (Optional)" value={tempBarcode} onChange={(e) => setTempBarcode(e.target.value)} className="w-full pl-10 pr-3 py-2 border border-slate-300 rounded-lg font-mono text-sm" /></div><button type="button" onClick={() => setScannerMode('add')} className="px-4 bg-slate-800 text-white rounded-lg flex items-center gap-2 hover:bg-slate-900"><Scan className="w-4 h-4"/> Scan</button></div>
@@ -502,8 +531,6 @@ export default function App() {
                   <div><label className="block text-xs font-medium text-slate-500 mb-1">Total Cost (₹)</label><input required name="totalCost" type="number" step="0.01" min="0" placeholder="0.00" className="w-full border border-slate-300 p-2 rounded-lg" /></div>
                 </div>
               </div>
-
-              {/* Invoice Details */}
               <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 space-y-4">
                 <h4 className="text-sm font-bold text-blue-700 uppercase tracking-wider">Invoice & Logistics</h4>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -517,14 +544,46 @@ export default function App() {
                   <div><label className="block text-xs font-medium text-slate-500 mb-1">Remarks / Status</label><input name="remarks" type="text" placeholder="Optional notes" className="w-full border border-slate-300 p-2 rounded-lg bg-white" /></div>
                 </div>
               </div>
-
               <div className="flex gap-2 pt-2"><button type="button" onClick={() => setIsAddModalOpen(false)} className="flex-1 p-2 border border-slate-300 rounded-lg hover:bg-slate-50 font-medium">Cancel</button><button type="submit" className="flex-1 p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium shadow-md shadow-blue-600/20">Register & Add to Stock</button></div>
             </form>
           </div>
         </div>
       )}
 
-      {/* ENHANCED ISSUANCE MODAL */}
+      {/* EDIT MODAL */}
+      {editModal.isOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 flex items-center justify-center p-4 z-50 print:hidden overflow-y-auto">
+          <div className="bg-white rounded-2xl w-full max-w-2xl p-6 shadow-xl my-8">
+            <h3 className="text-xl font-bold mb-4 text-slate-800">Correct / Edit Material</h3>
+            <form onSubmit={handleEdit} className="space-y-4">
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-4">
+                <div className="flex gap-2">
+                    <div className="relative flex-1">
+                        <Barcode className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input name="barcode" type="text" defaultValue={editModal.item?.barcode} className="w-full pl-10 pr-3 py-2 border border-slate-300 rounded-lg font-mono text-sm bg-white" placeholder="Barcode" />
+                    </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div><label className="block text-xs font-medium text-slate-500 mb-1">Name</label><input required name="name" type="text" defaultValue={editModal.item?.name} className="w-full border border-slate-300 p-2 rounded-lg bg-white" /></div>
+                  <div><label className="block text-xs font-medium text-slate-500 mb-1">Category</label><input required name="category" type="text" defaultValue={editModal.item?.category} className="w-full border border-slate-300 p-2 rounded-lg bg-white" /></div>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                  <div><label className="block text-xs font-medium text-slate-500 mb-1">Quantity</label><input required name="quantity" type="number" min="0" defaultValue={editModal.item?.quantity} className="w-full border border-slate-300 p-2 rounded-lg bg-white" /></div>
+                  <div><label className="block text-xs font-medium text-slate-500 mb-1">Unit Type</label><input required name="unit" type="text" defaultValue={editModal.item?.unit} className="w-full border border-slate-300 p-2 rounded-lg bg-white" /></div>
+                  <div><label className="block text-xs font-medium text-slate-500 mb-1">Low Alert At</label><input required name="minThreshold" type="number" min="0" defaultValue={editModal.item?.minThreshold} className="w-full border border-slate-300 p-2 rounded-lg bg-white" /></div>
+                  <div><label className="block text-xs font-medium text-slate-500 mb-1">Price Per Unit (₹)</label><input required name="pricePerUnit" type="number" step="0.01" min="0" defaultValue={editModal.item?.pricePerUnit} className="w-full border border-slate-300 p-2 rounded-lg bg-white" /></div>
+                </div>
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button type="button" onClick={() => setEditModal({ isOpen: false, item: null })} className="flex-1 p-2 border border-slate-300 rounded-lg hover:bg-slate-50 font-medium">Cancel</button>
+                <button type="submit" className="flex-1 p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium shadow-md shadow-blue-600/20">Confirm Corrections</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ISSUANCE MODAL */}
       {issueModal.isOpen && (
         <div className="fixed inset-0 bg-slate-900/60 flex items-center justify-center p-4 z-50 print:hidden">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
@@ -543,6 +602,36 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* NEW: CUSTOM REACT DELETE CONFIRMATION MODAL (Bypasses Browser Popup Blockers) */}
+      {deleteConfirm.isOpen && (
+        <div className="fixed inset-0 bg-slate-900/80 flex items-center justify-center p-4 z-[70] print:hidden backdrop-blur-sm">
+          <div className="bg-white rounded-3xl w-full max-w-sm p-8 shadow-2xl text-center transform transition-all">
+            <div className="mx-auto w-20 h-20 bg-red-50 rounded-full flex items-center justify-center mb-6">
+              <AlertTriangle className="w-10 h-10 text-red-600" />
+            </div>
+            <h3 className="text-2xl font-bold text-slate-800 mb-3">Confirm Deletion</h3>
+            <p className="text-slate-500 mb-8 leading-relaxed">
+              Are you sure you want to permanently delete <strong className="text-slate-800">{deleteConfirm.name}</strong>? This action cannot be undone and will be permanently recorded in the audit log.
+            </p>
+            <div className="flex gap-3">
+              <button 
+                onClick={() => setDeleteConfirm({ isOpen: false, type: '', id: null, name: '' })} 
+                className="flex-1 py-3 border-2 border-slate-200 rounded-xl font-bold text-slate-600 hover:bg-slate-50 hover:border-slate-300 transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={executeDelete} 
+                className="flex-1 py-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 transition-colors shadow-lg shadow-red-600/30"
+              >
+                Yes, Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
